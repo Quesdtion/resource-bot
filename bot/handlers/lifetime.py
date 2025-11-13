@@ -10,7 +10,7 @@ async def select_resource(message: types.Message):
     Показывает список активных ресурсов менеджера со статусом 'issued'
     и предлагает выбрать один для отметки срока жизни.
     """
-    pool = message.bot["db"]
+    pool = message.bot.db
     async with pool.acquire() as conn:
         rows = await conn.fetch(
             "SELECT id, type, issue_datetime FROM resources WHERE manager_tg_id=$1 AND status='issued'",
