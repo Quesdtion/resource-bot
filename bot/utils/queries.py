@@ -58,7 +58,7 @@ class DBQueries:
     ORDER BY type;
     """
 
-        REPORT_FINANCE = """
+           REPORT_FINANCE = """
     SELECT type,
            COUNT(*) AS total,
            SUM(price) AS spent,
