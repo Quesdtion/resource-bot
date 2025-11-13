@@ -61,7 +61,7 @@ async def process_lifetime(callback: types.CallbackQuery):
     res_id = int(res_id_str)
     minutes = int(minutes_str)
 
-    pool = callback.bot["db"]
+    pool = callback.bot.db
     async with pool.acquire() as conn:
         r = await conn.fetchrow("SELECT * FROM resources WHERE id=$1", res_id)
         if not r:
