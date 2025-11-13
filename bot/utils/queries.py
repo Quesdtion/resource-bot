@@ -58,14 +58,14 @@ class DBQueries:
     ORDER BY type;
     """
 
-    REPORT_FINANCE = """
-    SELECT supplier_id,
-           type,
+        REPORT_FINANCE = """
+    SELECT type,
            COUNT(*) AS total,
            SUM(price) AS spent,
            AVG(price) AS avg_price
     FROM history
     WHERE DATE(datetime)=CURRENT_DATE
-    GROUP BY supplier_id, type
-    ORDER BY supplier_id, type;
+    GROUP BY type
+    ORDER BY type;
     """
+
