@@ -10,7 +10,7 @@ async def daily_report(message: types.Message, role: str | None = None):
         await message.answer("⛔ Недостаточно прав.")
         return
 
-    pool = message.bot["db"]
+    pool = message.bot.db
     async with pool.acquire() as conn:
         rows = await conn.fetch(DBQueries.REPORT_GLOBAL_TYPES)
 
@@ -64,7 +64,7 @@ async def manager_report(message: types.Message, role: str | None = None):
         return
 
     target = parts[1]
-    pool = message.bot["db"]
+    pool = message.bot.db
 
     async with pool.acquire() as conn:
         mgr = await conn.fetchrow(
