@@ -1,11 +1,15 @@
-from aiogram import Router, types
-from aiogram.filters import Text
+from aiogram import Router, F, types
 from bot.keyboards.lifetime_kb import lifetime_kb
 
 router = Router()
 
-@router.message(Text("⏱ Отметить срок жизни"))
+
+@router.message(F.text == "⏱ Отметить срок жизни")
 async def select_resource(message: types.Message):
+    """
+    Показывает список активных ресурсов менеджера со статусом 'issued'
+    и предлагает выбрать один для отметки срока жизни.
+    """
     pool = message.bot["db"]
     async with pool.acquire() as conn:
         rows = await conn.fetch(
@@ -19,6 +23,7 @@ async def select_resource(message: types.Message):
 
     text_lines = ["<b>Ваши активные ресурсы:</b>"]
     kb_rows = []
+
     for r in rows:
         text_lines.append(f"• ID {r['id']} — {r['type']} (выдан: {r['issue_datetime']})")
         kb_rows.append([types.KeyboardButton(text=f"Ресурс {r['id']}")])
@@ -26,8 +31,13 @@ async def select_resource(message: types.Message):
     kb = types.ReplyKeyboardMarkup(keyboard=kb_rows, resize_keyboard=True)
     await message.answer("\n".join(text_lines), reply_markup=kb)
 
-@router.message(Text(startswith="Ресурс "))
+
+@router.message(F.text.startswith("Ресурс "))
 async def choose_lifetime(message: types.Message):
+    """
+    При выборе конкретного ресурса показывает инлайн-клавиатуру со сроками жизни.
+    Формат текста: 'Ресурс <ID>'
+    """
     try:
         res_id = int(message.text.split()[1])
     except (IndexError, ValueError):
@@ -39,8 +49,13 @@ async def choose_lifetime(message: types.Message):
         reply_markup=lifetime_kb(res_id),
     )
 
-@router.callback_query(Text(startswith="lt_"))
+
+@router.callback_query(F.data.startswith("lt_"))
 async def process_lifetime(callback: types.CallbackQuery):
+    """
+    Обработка выбранного срока жизни ресурса.
+    callback.data имеет формат: 'lt_<resource_id>:<minutes>'
+    """
     data = callback.data.removeprefix("lt_")
     res_id_str, minutes_str = data.split(":")
     res_id = int(res_id_str)
