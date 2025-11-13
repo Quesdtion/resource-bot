@@ -118,7 +118,7 @@ async def finance_report(message: types.Message, role: str | None = None):
         await message.answer("⛔ Эта команда только для владельца (owner).")
         return
 
-    pool = message.bot["db"]
+    pool = message.bot.db
     async with pool.acquire() as conn:
         rows = await conn.fetch(DBQueries.REPORT_FINANCE)
 
@@ -127,20 +127,31 @@ async def finance_report(message: types.Message, role: str | None = None):
         return
 
     text_lines = ["💰 <b>Финансовый отчёт за сегодня</b>", ""]
-    last_supplier = None
+
+    total_spent_all = 0
+    total_resources_all = 0
 
     for r in rows:
-        if r["supplier_id"] != last_supplier:
-            text_lines.append(f"🏷 Поставщик <b>{r['supplier_id']}</b>")
-            last_supplier = r["supplier_id"]
+        total = r["total"] or 0
+        spent = r["spent"] or 0
+        avg_price = r["avg_price"] or 0.0
+
+        total_spent_all += spent
+        total_resources_all += total
 
         text_lines.append(
-            "• {type}: {total} шт, средняя цена {price:.2f}₽, списано {spent:.2f}₽".format(
+            "• <b>{type}</b>: {total} шт, ср. цена {price:.2f}₽, всего {spent:.2f}₽".format(
                 type=r["type"],
-                total=r["total"] or 0,
-                price=(r["avg_price"] or 0.0),
-                spent=(r["spent"] or 0.0),
+                total=total,
+                price=avg_price,
+                spent=spent,
             )
         )
 
+    text_lines.append("\n━━━━━━━━━━━━━━")
+    text_lines.append(
+        f"ИТОГО: <b>{total_resources_all}</b> шт на сумму <b>{total_spent_all:.2f}₽</b>"
+    )
+
     await message.answer("\n".join(text_lines))
+
