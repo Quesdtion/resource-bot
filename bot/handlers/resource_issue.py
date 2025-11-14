@@ -1,104 +1,127 @@
-from aiogram import Router, F, types
+from aiogram import Router, F
+from aiogram.types import CallbackQuery, Message
+
+from db.database import get_pool  # тот же модуль, что и в других хендлерах
 from bot.utils.queries import DBQueries
-from bot.keyboards.resource_kb import receipt_state_kb
 
 router = Router()
 
-# Кнопка в меню менеджера: "📦 Получить ресурс"
-@router.message(F.text == "📦 Получить ресурс")
-async def choose_type(message: types.Message):
-    kb = types.ReplyKeyboardMarkup(
-        keyboard=[
-            [types.KeyboardButton(text="Мамба")],
-            [types.KeyboardButton(text="Табор")],
-            [types.KeyboardButton(text="Бебо")],
-        ],
-        resize_keyboard=True,
-    )
-    await message.answer("Выберите тип ресурса:", reply_markup=kb)
+
+# --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
 
 
-TYPES = {
-    "Мамба": "mamba",
-    "Табор": "tabor",
-    "Бебо": "bebo",
-}
+async def _issue_resource_for_manager(
+    manager_tg_id: int,
+    resource_type: str,
+) -> tuple[dict | None, str]:
+    """
+    Выдаёт один свободный ресурс указанного типа менеджеру.
+    Возвращает (resource_dict | None, error_message | "").
+    """
 
-@router.message(F.text.in_(list(TYPES.keys())))
-async def issue_resource(message: types.Message):
-    resource_type = TYPES[message.text]
-    # пул БД берём из bot.db, как мы настроили в main.py
-    pool = message.bot.db
-
+    pool = await get_pool()
     async with pool.acquire() as conn:
+        # Ищем свободный ресурс нужного типа
         resource = await conn.fetchrow(DBQueries.GET_FREE_RESOURCE, resource_type)
         if not resource:
-            await message.answer("❗ Свободных ресурсов этого типа нет.")
-            return
+            return None, "Свободных ресурсов этого типа сейчас нет."
 
-        # помечаем ресурс как выданный
-        await conn.execute(DBQueries.ISSUE_RESOURCE, message.from_user.id, resource["id"])
-        # пишем в историю
+        # Помечаем ресурс выданным
         await conn.execute(
-            DBQueries.HISTORY_LOG,
+            DBQueries.ISSUE_RESOURCE,
+            manager_tg_id,
             resource["id"],
-            message.from_user.id,
-            resource["type"],
-            resource["supplier_id"],
-            resource["buy_price"],
-            "issued",
-            None,
-            None,
         )
 
-    text = (
-        "📦 <b>Ресурс выдан</b>\n\n"
-        f"ID: <b>{resource['id']}</b>\n"
-        f"Тип: <b>{resource['type']}</b>\n\n"
-        f"Логин: <code>{resource['login']}</code>\n"
-        f"Пароль: <code>{resource['password']}</code>\n"
-        f"Прокси: <code>{resource['proxy'] or 'нет'}</code>\n\n"
-        f"Поставщик: <b>{resource['supplier_id']}</b>\n"
-        f"Закупочная цена: <b>{resource['buy_price']}₽</b>\n\n"
-        "Отметь состояние ресурса кнопками ниже 👇"
-    )
-    await message.answer(text, reply_markup=receipt_state_kb(resource["id"]))
-
-
-@router.callback_query(F.data.startswith("rcpt_"))
-async def receipt_state_handler(callback: types.CallbackQuery):
-    action, res_id_str = callback.data.split(":")
-    res_id = int(res_id_str)
-    pool = callback.bot.db
-
-    if action == "rcpt_working":
-        status = "issued"
-        receipt = "working"
-        msg = "🟢 Ресурс отмечен как рабочий."
-    elif action == "rcpt_blocked":
-        status = "blocked_at_receipt"
-        receipt = "blocked"
-        msg = "🔴 Ресурс отмечен как в блоке при получении."
-    else:
-        status = "error_on_login"
-        receipt = "error"
-        msg = "⚠️ Отмечена ошибка входа."
-
-    async with pool.acquire() as conn:
-        await conn.execute(DBQueries.SET_RECEIPT_STATE, receipt, status, res_id)
-        r = await conn.fetchrow("SELECT * FROM resources WHERE id=$1", res_id)
+        # Пишем запись в историю
         await conn.execute(
-            DBQueries.HISTORY_LOG,
-            res_id,
-            callback.from_user.id,
-            r["type"],
-            r["supplier_id"],
-            r["buy_price"],
-            "receipt_status",
-            receipt,
-            None,
+            DBQueries.INSERT_HISTORY,
+            resource["id"],                 # resource_id
+            manager_tg_id,                  # manager_tg_id
+            resource["type"],               # type
+            resource["supplier_id"],        # supplier_id
+            resource["buy_price"],          # price
+            "issue",                        # action
+            resource["receipt_state"],      # receipt_state
+            resource["lifetime_minutes"],   # lifetime_minutes
         )
 
-    await callback.message.edit_reply_markup()
-    await callback.message.answer(msg)
+    # Превращаем Record в обычный dict для удобства
+    return dict(resource), ""
+
+
+# --- ХЕНДЛЕРЫ ---
+
+
+@router.callback_query(F.data.startswith("issue_resource:"))
+async def issue_resource_callback(callback: CallbackQuery):
+    """
+    Хендлер на нажатие кнопки вида:
+    callback_data = "issue_resource:mamba" или "issue_resource:taboor" и т.п.
+    """
+
+    parts = callback.data.split(":", 1)
+    if len(parts) != 2 or not parts[1]:
+        await callback.answer("Некорректный формат запроса ресурса", show_alert=True)
+        return
+
+    resource_type = parts[1]
+
+    resource, error = await _issue_resource_for_manager(
+        manager_tg_id=callback.from_user.id,
+        resource_type=resource_type,
+    )
+
+    if error:
+        await callback.answer(error, show_alert=True)
+        return
+
+    # Отправляем данные ресурса менеджеру
+    text_lines = [
+        f"Ресурс типа <b>{resource['type']}</b> выдан:",
+    ]
+    if resource.get("login"):
+        text_lines.append(f"🔑 Логин: <code>{resource['login']}</code>")
+    if resource.get("password"):
+        text_lines.append(f"🔒 Пароль: <code>{resource['password']}</code>")
+    if resource.get("proxy"):
+        text_lines.append(f"🌐 Прокси: <code>{resource['proxy']}</code>")
+
+    await callback.message.answer("\n".join(text_lines))
     await callback.answer()
+
+
+@router.message(F.text.in_({"/issue", "Выдать ресурс"}))
+async def issue_resource_command(message: Message):
+    """
+    Запасной хендлер на случай, если вы хотите тестировать выдачу командой.
+    Формат: /issue mamba
+    """
+
+    parts = message.text.split(maxsplit=1)
+    if len(parts) < 2:
+        await message.answer("Укажи тип ресурса, например: <code>/issue mamba</code>")
+        return
+
+    resource_type = parts[1].strip()
+
+    resource, error = await _issue_resource_for_manager(
+        manager_tg_id=message.from_user.id,
+        resource_type=resource_type,
+    )
+
+    if error:
+        await message.answer(error)
+        return
+
+    text_lines = [
+        f"Ресурс типа <b>{resource['type']}</b> выдан:",
+    ]
+    if resource.get("login"):
+        text_lines.append(f"🔑 Логин: <code>{resource['login']}</code>")
+    if resource.get("password"):
+        text_lines.append(f"🔒 Пароль: <code>{resource['password']}</code>")
+    if resource.get("proxy"):
+        text_lines.append(f"🌐 Прокси: <code>{resource['proxy']}</code>")
+
+    await message.answer("\n".join(text_lines))
