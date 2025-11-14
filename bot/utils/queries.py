@@ -3,8 +3,7 @@ class DBQueries:
 
     CREATE_MANAGERS = """
     CREATE TABLE IF NOT EXISTS managers (
-        id SERIAL PRIMARY KEY,
-        tg_id BIGINT UNIQUE NOT NULL,
+        tg_id BIGINT PRIMARY KEY,
         name TEXT,
         role TEXT DEFAULT 'manager'
     );
@@ -16,37 +15,46 @@ class DBQueries:
         type TEXT NOT NULL,
         login TEXT,
         password TEXT,
+        proxy TEXT,
+        supplier_id INT,
         buy_price NUMERIC DEFAULT 0,
         status TEXT DEFAULT 'free',
         manager_tg_id BIGINT,
-        lifetime INT DEFAULT 0
+        issue_datetime TIMESTAMP,
+        receipt_state TEXT,
+        lifetime_minutes INT,
+        end_datetime TIMESTAMP
     );
     """
 
     CREATE_HISTORY = """
     CREATE TABLE IF NOT EXISTS history (
         id SERIAL PRIMARY KEY,
+        datetime TIMESTAMP DEFAULT NOW(),
         resource_id INT,
         manager_tg_id BIGINT,
         type TEXT,
+        supplier_id INT,
         price NUMERIC,
-        datetime TIMESTAMP DEFAULT NOW()
+        action TEXT,
+        receipt_state TEXT,
+        lifetime_minutes INT
     );
     """
 
     # --------------------- ОТЧЁТЫ ---------------------
 
-    # Ежедневный отчёт
+    # Ежедневный отчёт по типам ресурсов
     REPORT_DAILY = """
     SELECT type,
-           COUNT(*) FILTER (WHERE status = 'busy') AS issued,
+           COUNT(*) FILTER (WHERE status = 'busy')   AS issued,
            COUNT(*) FILTER (WHERE status = 'closed') AS closed
     FROM resources
     GROUP BY type
     ORDER BY type;
     """
 
-    # Отчёт по менеджерам
+    # Отчёт по менеджерам за сегодня
     REPORT_MANAGER = """
     SELECT manager_tg_id,
            COUNT(*) AS total
@@ -56,7 +64,7 @@ class DBQueries:
     ORDER BY total DESC;
     """
 
-    # Финансовый отчёт (без поставщиков!)
+    # Финансовый отчёт (без поставщиков, только по типам)
     REPORT_FINANCE = """
     SELECT type,
            COUNT(*) AS total,
@@ -70,30 +78,38 @@ class DBQueries:
 
     # --------------------- РАБОТА С РЕСУРСАМИ ---------------------
 
+    # Взять свободный ресурс нужного типа
     GET_FREE_RESOURCE = """
-    SELECT * FROM resources
-    WHERE type = $1 AND status = 'free'
+    SELECT *
+    FROM resources
+    WHERE type = $1
+      AND status = 'free'
     ORDER BY id
     LIMIT 1;
     """
 
-    SET_RESOURCE_BUSY = """
+    # Пометить ресурс выданным менеджеру
+    ISSUE_RESOURCE = """
     UPDATE resources
-    SET status = 'busy',
-        manager_tg_id = $2,
-        lifetime = $3
+    SET manager_tg_id   = $1,
+        status          = 'busy',
+        issue_datetime  = NOW(),
+        receipt_state   = 'new'
+    WHERE id = $2;
+    """
+
+    # Закрыть ресурс (например, после окончания работы)
+    CLOSE_RESOURCE = """
+    UPDATE resources
+    SET status        = 'closed',
+        end_datetime  = NOW()
     WHERE id = $1;
     """
 
-    SET_RESOURCE_CLOSED = """
-    UPDATE resources
-    SET status = 'closed'
-    WHERE id = $1;
-    """
-
+    # Записать действие в историю
     INSERT_HISTORY = """
-    INSERT INTO history (resource_id, manager_tg_id, type, price)
-    VALUES ($1, $2, $3, $4);
+    INSERT INTO history (resource_id, manager_tg_id, type, supplier_id, price, action, receipt_state, lifetime_minutes)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8);
     """
 
     # --------------------- МЕНЕДЖЕРЫ ---------------------
@@ -111,13 +127,6 @@ class DBQueries:
     # --------------------- ДОБАВЛЕНИЕ РЕСУРСОВ ---------------------
 
     ADD_RESOURCE = """
-    INSERT INTO resources (type, login, password, buy_price)
-    VALUES ($1, $2, $3, $4);
-    """
-
-    # Массовое добавление (для add_batch)
-    ADD_RESOURCE_BATCH = """
-    INSERT INTO resources (type, buy_price)
-    VALUES ($1, $2)
-    RETURNING id;
+    INSERT INTO resources (type, login, password, proxy, supplier_id, buy_price, status)
+    VALUES ($1, $2, $3, $4, $5, $6, 'free');
     """
