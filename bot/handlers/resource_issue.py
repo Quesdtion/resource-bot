@@ -1,43 +1,59 @@
-from aiogram import Router, F
-from aiogram.types import CallbackQuery, Message
-
-from db.database import get_pool  # тот же модуль, что и в других хендлерах
+from aiogram import Router, F, types
 from bot.utils.queries import DBQueries
 
 router = Router()
 
+# Отображаемые названия типов -> значения в базе
+TYPES = {
+    "Мамба": "mamba",
+    "Табор": "tabor",
+    "Бебо": "bebo",
+}
 
-# --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
 
-
-async def _issue_resource_for_manager(
-    manager_tg_id: int,
-    resource_type: str,
-) -> tuple[dict | None, str]:
+@router.message(F.text == "📦 Получить ресурс")
+async def choose_type(message: types.Message):
     """
-    Выдаёт один свободный ресурс указанного типа менеджеру.
-    Возвращает (resource_dict | None, error_message | "").
+    Показываем менеджеру выбор типа ресурса.
     """
+    kb = types.ReplyKeyboardMarkup(
+        keyboard=[
+            [types.KeyboardButton(text="Мамба")],
+            [types.KeyboardButton(text="Табор")],
+            [types.KeyboardButton(text="Бебо")],
+        ],
+        resize_keyboard=True,
+    )
+    await message.answer("Выбери тип ресурса:", reply_markup=kb)
 
-    pool = await get_pool()
+
+@router.message(F.text.in_(list(TYPES.keys())))
+async def issue_resource(message: types.Message):
+    """
+    Выдаём первый свободный ресурс нужного типа и логируем действие в history.
+    """
+    resource_type = TYPES[message.text]
+
+    pool = message.bot.db
     async with pool.acquire() as conn:
-        # Ищем свободный ресурс нужного типа
+        # Берём свободный ресурс
         resource = await conn.fetchrow(DBQueries.GET_FREE_RESOURCE, resource_type)
         if not resource:
-            return None, "Свободных ресурсов этого типа сейчас нет."
+            await message.answer("❗ Свободных ресурсов этого типа сейчас нет.")
+            return
 
-        # Помечаем ресурс выданным
+        # Помечаем ресурс выданным (ставим manager_tg_id, время, receipt_state='new')
         await conn.execute(
             DBQueries.ISSUE_RESOURCE,
-            manager_tg_id,
+            message.from_user.id,
             resource["id"],
         )
 
-        # Пишем запись в историю
+        # Пишем в историю
         await conn.execute(
             DBQueries.INSERT_HISTORY,
             resource["id"],                 # resource_id
-            manager_tg_id,                  # manager_tg_id
+            message.from_user.id,           # manager_tg_id
             resource["type"],               # type
             resource["supplier_id"],        # supplier_id
             resource["buy_price"],          # price
@@ -46,40 +62,14 @@ async def _issue_resource_for_manager(
             resource["lifetime_minutes"],   # lifetime_minutes
         )
 
-    # Превращаем Record в обычный dict для удобства
-    return dict(resource), ""
-
-
-# --- ХЕНДЛЕРЫ ---
-
-
-@router.callback_query(F.data.startswith("issue_resource:"))
-async def issue_resource_callback(callback: CallbackQuery):
-    """
-    Хендлер на нажатие кнопки вида:
-    callback_data = "issue_resource:mamba" или "issue_resource:taboor" и т.п.
-    """
-
-    parts = callback.data.split(":", 1)
-    if len(parts) != 2 or not parts[1]:
-        await callback.answer("Некорректный формат запроса ресурса", show_alert=True)
-        return
-
-    resource_type = parts[1]
-
-    resource, error = await _issue_resource_for_manager(
-        manager_tg_id=callback.from_user.id,
-        resource_type=resource_type,
-    )
-
-    if error:
-        await callback.answer(error, show_alert=True)
-        return
-
-    # Отправляем данные ресурса менеджеру
+    # Формируем текст для менеджера
     text_lines = [
-        f"Ресурс типа <b>{resource['type']}</b> выдан:",
+        "📦 <b>Ресурс выдан</b>",
+        f"ID: <b>{resource['id']}</b>",
+        f"Тип: <b>{resource['type']}</b>",
+        "",
     ]
+
     if resource.get("login"):
         text_lines.append(f"🔑 Логин: <code>{resource['login']}</code>")
     if resource.get("password"):
@@ -87,41 +77,5 @@ async def issue_resource_callback(callback: CallbackQuery):
     if resource.get("proxy"):
         text_lines.append(f"🌐 Прокси: <code>{resource['proxy']}</code>")
 
-    await callback.message.answer("\n".join(text_lines))
-    await callback.answer()
-
-
-@router.message(F.text.in_({"/issue", "Выдать ресурс"}))
-async def issue_resource_command(message: Message):
-    """
-    Запасной хендлер на случай, если вы хотите тестировать выдачу командой.
-    Формат: /issue mamba
-    """
-
-    parts = message.text.split(maxsplit=1)
-    if len(parts) < 2:
-        await message.answer("Укажи тип ресурса, например: <code>/issue mamba</code>")
-        return
-
-    resource_type = parts[1].strip()
-
-    resource, error = await _issue_resource_for_manager(
-        manager_tg_id=message.from_user.id,
-        resource_type=resource_type,
-    )
-
-    if error:
-        await message.answer(error)
-        return
-
-    text_lines = [
-        f"Ресурс типа <b>{resource['type']}</b> выдан:",
-    ]
-    if resource.get("login"):
-        text_lines.append(f"🔑 Логин: <code>{resource['login']}</code>")
-    if resource.get("password"):
-        text_lines.append(f"🔒 Пароль: <code>{resource['password']}</code>")
-    if resource.get("proxy"):
-        text_lines.append(f"🌐 Прокси: <code>{resource['proxy']}</code>")
-
-    await message.answer("\n".join(text_lines))
+    text = "\n".join(text_lines)
+    await message.answer(text)
