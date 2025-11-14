@@ -122,6 +122,9 @@ class DBQueries:
     VALUES ($1, $2, $3, $4, $5, $6, $7, $8);
     """
 
+    # Алиас для старого кода (resource_issue.py использует HISTORY_LOG)
+    HISTORY_LOG = INSERT_HISTORY
+
     # --------------------- МЕНЕДЖЕРЫ ---------------------
 
     ADD_MANAGER = """
