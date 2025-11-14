@@ -1,5 +1,5 @@
 class DBQueries:
-    # --------------------- ПРОВЕРКА/СОЗДАНИЕ ТАБЛИЦ ---------------------
+    # --------------------- СОЗДАНИЕ ТАБЛИЦ (на всякий случай) ---------------------
 
     CREATE_MANAGERS = """
     CREATE TABLE IF NOT EXISTS managers (
@@ -18,7 +18,7 @@ class DBQueries:
         proxy TEXT,
         supplier_id INT,
         buy_price NUMERIC DEFAULT 0,
-        status TEXT DEFAULT 'free',
+        status TEXT,
         manager_tg_id BIGINT,
         issue_datetime TIMESTAMP,
         receipt_state TEXT,
@@ -44,17 +44,17 @@ class DBQueries:
 
     # --------------------- ОТЧЁТЫ ---------------------
 
-    # Ежедневный отчёт по типам ресурсов
+    # Ежедневный отчёт по типам ресурсов (по состоянию таблицы resources)
     REPORT_DAILY = """
     SELECT type,
-           COUNT(*) FILTER (WHERE status = 'busy')   AS issued,
-           COUNT(*) FILTER (WHERE status = 'closed') AS closed
+           COUNT(*) FILTER (WHERE manager_tg_id IS NOT NULL) AS issued,
+           COUNT(*) FILTER (WHERE end_datetime IS NOT NULL)  AS closed
     FROM resources
     GROUP BY type
     ORDER BY type;
     """
 
-    # Отчёт по менеджерам за сегодня
+    # Отчёт по менеджерам за сегодня (по истории)
     REPORT_MANAGER = """
     SELECT manager_tg_id,
            COUNT(*) AS total
@@ -64,12 +64,12 @@ class DBQueries:
     ORDER BY total DESC;
     """
 
-    # Финансовый отчёт (без поставщиков, только по типам)
+    # Финансовый отчёт за сегодня (без поставщиков, только типы ресурсов)
     REPORT_FINANCE = """
     SELECT type,
-           COUNT(*) AS total,
-           SUM(price) AS spent,
-           AVG(price) AS avg_price
+           COUNT(*)              AS total_operations,
+           SUM(price)            AS total_spent,
+           AVG(price)            AS avg_price
     FROM history
     WHERE DATE(datetime) = CURRENT_DATE
     GROUP BY type
@@ -78,37 +78,47 @@ class DBQueries:
 
     # --------------------- РАБОТА С РЕСУРСАМИ ---------------------
 
-    # Взять свободный ресурс нужного типа
+    # Найти свободный ресурс нужного типа:
+    # статус = 'free' И ещё не привязан к менеджеру
     GET_FREE_RESOURCE = """
     SELECT *
     FROM resources
     WHERE type = $1
       AND status = 'free'
+      AND manager_tg_id IS NULL
     ORDER BY id
     LIMIT 1;
     """
 
     # Пометить ресурс выданным менеджеру
+    # status НЕ трогаем, чтобы не нарушать resources_status_check
     ISSUE_RESOURCE = """
     UPDATE resources
     SET manager_tg_id   = $1,
-        status          = 'busy',
         issue_datetime  = NOW(),
         receipt_state   = 'new'
     WHERE id = $2;
     """
 
-    # Закрыть ресурс (например, после окончания работы)
+    # Закрыть ресурс (без изменения status)
     CLOSE_RESOURCE = """
     UPDATE resources
-    SET status        = 'closed',
-        end_datetime  = NOW()
+    SET end_datetime = NOW()
     WHERE id = $1;
     """
 
     # Записать действие в историю
     INSERT_HISTORY = """
-    INSERT INTO history (resource_id, manager_tg_id, type, supplier_id, price, action, receipt_state, lifetime_minutes)
+    INSERT INTO history (
+        resource_id,
+        manager_tg_id,
+        type,
+        supplier_id,
+        price,
+        action,
+        receipt_state,
+        lifetime_minutes
+    )
     VALUES ($1, $2, $3, $4, $5, $6, $7, $8);
     """
 
@@ -121,12 +131,22 @@ class DBQueries:
     """
 
     GET_MANAGER_ROLE = """
-    SELECT role FROM managers WHERE tg_id = $1;
+    SELECT role FROM managers
+    WHERE tg_id = $1;
     """
 
     # --------------------- ДОБАВЛЕНИЕ РЕСУРСОВ ---------------------
 
+    # Добавление одного ресурса
     ADD_RESOURCE = """
-    INSERT INTO resources (type, login, password, proxy, supplier_id, buy_price, status)
+    INSERT INTO resources (
+        type,
+        login,
+        password,
+        proxy,
+        supplier_id,
+        buy_price,
+        status
+    )
     VALUES ($1, $2, $3, $4, $5, $6, 'free');
     """
