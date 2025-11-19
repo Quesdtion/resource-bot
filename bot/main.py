@@ -1,35 +1,39 @@
 import asyncio
+import logging
+
 from aiogram import Bot, Dispatcher
-from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.client.default import DefaultBotProperties
 
 from bot.config import BOT_TOKEN
-from bot.utils.db import create_pool
-from bot.middlewares.role import RoleMiddleware
-from bot.utils.scheduler import setup_scheduler
+from db.database import get_pool
+
+from bot.handlers import (
+    manager_menu,
+    resource_issue,
+    lifetime,
+    admin_menu,
+    reports,
+    import_resources,
+)
+
+logging.basicConfig(level=logging.INFO)
 
 
 async def main():
     if not BOT_TOKEN:
-        raise RuntimeError("BOT_TOKEN не задан в переменных окружения")
+        raise RuntimeError("BOT_TOKEN не задан!")
 
-    # Создаём бота
-    bot = Bot(token=BOT_TOKEN, parse_mode="HTML")
+    bot = Bot(
+        token=BOT_TOKEN,
+        default=DefaultBotProperties(parse_mode="HTML")
+    )
 
-    # Создаём пул подключений к БД и вешаем на бота
-    pool = await create_pool()
-    # теперь в любом хендлере можно будет получить доступ как message.bot.db
-    setattr(bot, "db", pool)
+    dp = Dispatcher()
 
-    # Диспетчер
-    dp = Dispatcher(storage=MemoryStorage())
+    # Инициируем подключение к базе
+    bot.db = await get_pool()
 
-    # Мидлварь с ролями
-    dp.message.middleware(RoleMiddleware())
-    dp.callback_query.middleware(RoleMiddleware())
-
-    # Роутеры
-    from bot.handlers import manager_menu, resource_issue, lifetime, admin_menu, reports, import_resources
-...
+    # Подключаем роутеры
     dp.include_router(manager_menu.router)
     dp.include_router(resource_issue.router)
     dp.include_router(lifetime.router)
@@ -37,11 +41,8 @@ async def main():
     dp.include_router(reports.router)
     dp.include_router(import_resources.router)
 
-
-    # Планировщик (заглушка)
-    setup_scheduler(dp)
-
     print("Bot started")
+
     await dp.start_polling(bot)
 
 
