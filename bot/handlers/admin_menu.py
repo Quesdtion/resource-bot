@@ -1,17 +1,43 @@
-from aiogram import Router, types
-from aiogram.filters import Command
+from aiogram import Router, F
+from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton
+
+from db.database import get_pool
 
 router = Router()
 
-@router.message(Command("admin"))
-async def admin_menu(message: types.Message, role: str | None = None):
-    if role not in ("admin", "owner"):
-        await message.answer("⛔ Нет доступа.")
+# Клавиатура админа
+admin_kb = ReplyKeyboardMarkup(
+    keyboard=[
+        [KeyboardButton(text="📊 Отчёт по ресурсам")],
+        [KeyboardButton(text="💰 Финансовый отчёт")],
+    ],
+    resize_keyboard=True
+)
+
+
+async def is_admin(user_id: int) -> bool:
+    """
+    Проверяем роль пользователя в таблице managers.
+    tg_id = user_id, роль должна быть 'admin'
+    """
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT role FROM managers WHERE tg_id = $1",
+            user_id
+        )
+    return row is not None and row["role"] == "admin"
+
+
+@router.message(F.text == "/admin")
+@router.message(F.text == "⚙ Админ-панель")
+async def admin_start(message: Message):
+    # Проверяем права
+    if not await is_admin(message.from_user.id):
+        await message.answer("У тебя нет доступа к админ-панели.")
         return
 
     await message.answer(
-        "⚙ <b>Админ-меню</b>\n\n"
-        "/daily_report — общий отчёт за сегодня\n"
-        "/manager_report ID — отчёт по менеджеру\n"
-        "/finance_report — финансовый отчёт (только owner)"
+        "Админ-панель. Выбери действие:",
+        reply_markup=admin_kb
     )
