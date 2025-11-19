@@ -28,12 +28,15 @@ async def main():
     dp.callback_query.middleware(RoleMiddleware())
 
     # Роутеры
-    from bot.handlers import manager_menu, resource_issue, lifetime, admin_menu, reports
+    from bot.handlers import manager_menu, resource_issue, lifetime, admin_menu, reports, import_resources
+...
     dp.include_router(manager_menu.router)
     dp.include_router(resource_issue.router)
     dp.include_router(lifetime.router)
     dp.include_router(admin_menu.router)
     dp.include_router(reports.router)
+    dp.include_router(import_resources.router)
+
 
     # Планировщик (заглушка)
     setup_scheduler(dp)
