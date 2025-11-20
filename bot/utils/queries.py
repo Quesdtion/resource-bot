@@ -1,6 +1,7 @@
 class DBQueries:
+
     # ===========================
-    #        МЕНЕДЖЕРЫ / РОЛИ
+    #        РОЛИ / МЕНЕДЖЕРЫ
     # ===========================
 
     CHECK_MANAGER_ROLE = """
@@ -15,7 +16,7 @@ class DBQueries:
     #        РЕСУРСЫ
     # ===========================
 
-    -- Свободный ресурс = manager_tg_id IS NULL
+    # Получить один свободный ресурс нужного типа
     GET_FREE_RESOURCE_BY_TYPE = """
     SELECT *
     FROM resources
@@ -25,7 +26,7 @@ class DBQueries:
     LIMIT 1;
     """
 
-    -- Выдаём ресурс: НЕ трогаем status, только вешаем менеджера
+    # Выдать ресурс менеджеру
     ISSUE_RESOURCE = """
     UPDATE resources
     SET manager_tg_id = $1,
@@ -34,7 +35,7 @@ class DBQueries:
     WHERE id = $2;
     """
 
-    -- Ресурсы менеджера = у кого manager_tg_id = $1
+    # Все ресурсы, выданные менеджеру
     GET_ISSUED_RESOURCES = """
     SELECT *
     FROM resources
@@ -48,8 +49,7 @@ class DBQueries:
     """
 
     # ===========================
-    #      ОТМЕТКА СТАТУСА
-    #   (good / bad в receipt_state)
+    #   ОТМЕТКА СТАТУСА РЕСУРСА
     # ===========================
 
     MARK_RESOURCE_GOOD = """
@@ -65,7 +65,7 @@ class DBQueries:
     """
 
     # ===========================
-    #        ЛАЙФТАЙМ
+    #          LIFETIME
     # ===========================
 
     SET_LIFETIME = """
@@ -78,12 +78,7 @@ class DBQueries:
 
     HISTORY_LIFETIME = """
     INSERT INTO history (
-        datetime,
-        resource_id,
-        manager_tg_id,
-        type,
-        action,
-        lifetime_minutes
+        datetime, resource_id, manager_tg_id, type, action, lifetime_minutes
     )
     VALUES (NOW(), $1, $2, $3, 'lifetime_set', $4);
     """
@@ -94,42 +89,27 @@ class DBQueries:
 
     HISTORY_LOG = """
     INSERT INTO history (
-        datetime,
-        resource_id,
-        manager_tg_id,
-        type,
-        action,
-        price
+        datetime, resource_id, manager_tg_id, type, action, price
     )
     VALUES (NOW(), $1, $2, $3, 'issued', NULL);
     """
 
     HISTORY_STATUS_CHANGE = """
     INSERT INTO history (
-        datetime,
-        resource_id,
-        manager_tg_id,
-        type,
-        action,
-        price
+        datetime, resource_id, manager_tg_id, type, action, price
     )
     VALUES (NOW(), $1, $2, $3, $4, NULL);
     """
 
     INSERT_PURCHASE_LOG = """
     INSERT INTO history (
-        datetime,
-        resource_id,
-        manager_tg_id,
-        type,
-        action,
-        price
+        datetime, resource_id, manager_tg_id, type, action, price
     )
     VALUES (NOW(), $1, NULL, $2, 'purchase', $3);
     """
 
     # ===========================
-    #       ОТЧЁТЫ АДМИНА
+    #            ОТЧЁТЫ
     # ===========================
 
     REPORT_RESOURCES = """
@@ -137,12 +117,16 @@ class DBQueries:
         (SELECT COUNT(*) FROM resources) AS total,
         (SELECT COUNT(*) FROM resources WHERE manager_tg_id IS NULL) AS free,
         (SELECT COUNT(*) FROM resources WHERE manager_tg_id IS NOT NULL) AS busy,
-        (SELECT COUNT(*) FROM resources
+        (SELECT COUNT(*) 
+            FROM resources 
             WHERE receipt_state = 'used'
-              AND end_datetime::date = NOW()::date) AS expired_today,
-        (SELECT COUNT(*) FROM history
+              AND end_datetime::date = NOW()::date
+        ) AS expired_today,
+        (SELECT COUNT(*)
+            FROM history
             WHERE action = 'issued'
-              AND datetime::date = NOW()::date) AS issued_today;
+              AND datetime::date = NOW()::date
+        ) AS issued_today;
     """
 
     REPORT_FINANCE = """
@@ -154,7 +138,7 @@ class DBQueries:
     """
 
     # ===========================
-    #     ЗАГРУЗКА РЕСУРСОВ
+    #      ЗАГРУЗКА РЕСУРСОВ
     # ===========================
 
     INSERT_RESOURCE_BULK = """
