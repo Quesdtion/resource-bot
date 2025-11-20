@@ -1,5 +1,5 @@
 from aiogram import Router, F
-from aiogram.types import Message
+from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
 
@@ -10,20 +10,38 @@ from bot.handlers.admin_menu import admin_menu_kb
 router = Router()
 
 
+# Типы ресурсов для кнопок при загрузке
+RESOURCE_TYPES = ["mamba", "tabor", "bebo"]
+
+
 class UploadStates(StatesGroup):
-    enter_type = State()
-    enter_data = State()
+    choosing_type = State()
+    entering_data = State()
 
 
 async def _is_admin(user_id: int) -> bool:
     """
-    Проверяем роль пользователя в таблице managers.
+    Проверяем, что пользователь — админ (role='admin' в таблице managers).
     """
     pool = await get_pool()
     async with pool.acquire() as conn:
         row = await conn.fetchrow(DBQueries.CHECK_MANAGER_ROLE, user_id)
 
     return bool(row and row["role"] == "admin")
+
+
+def resource_type_kb() -> ReplyKeyboardMarkup:
+    """
+    Клавиатура выбора типа ресурса при загрузке.
+    """
+    buttons = [[KeyboardButton(text=t)] for t in RESOURCE_TYPES]
+    buttons.append([KeyboardButton(text="Другое")])
+
+    return ReplyKeyboardMarkup(
+        keyboard=buttons,
+        resize_keyboard=True,
+        one_time_keyboard=True,
+    )
 
 
 @router.message(F.text == "📦 Загрузить ресурсы")
@@ -35,49 +53,60 @@ async def upload_start(message: Message, state: FSMContext):
         await message.answer("Нет доступа")
         return
 
-    await state.set_state(UploadStates.enter_type)
+    await state.set_state(UploadStates.choosing_type)
     await message.answer(
-        "Введи тип ресурса (например: mamba, tabor, bebo).\n\n"
-        "Этот тип будет установлен для всех ресурсов из этой пачки."
+        "Выбери тип ресурса для загрузки:",
+        reply_markup=resource_type_kb(),
     )
 
 
-@router.message(UploadStates.enter_type)
-async def upload_set_type(message: Message, state: FSMContext):
-    res_type = message.text.strip()
-    if not res_type:
-        await message.answer("Тип не может быть пустым, введи снова.")
+@router.message(UploadStates.choosing_type)
+async def set_upload_type(message: Message, state: FSMContext):
+    text = message.text.strip()
+
+    if text == "Другое":
+        await message.answer(
+            "Введи тип ресурса вручную (например: mamba_email, phone, vk и т.п.):",
+            reply_markup=ReplyKeyboardRemove(),
+        )
+        # Остаёмся в том же состоянии, ждём текста
+        return
+
+    # Если нажата готовая кнопка или введён свой тип
+    res_type = text.lower()
+
+    if res_type == "":
+        await message.answer("Тип не может быть пустым. Введи тип ещё раз.")
         return
 
     await state.update_data(res_type=res_type)
-    await state.set_state(UploadStates.enter_data)
+    await state.set_state(UploadStates.entering_data)
 
     await message.answer(
-        "Теперь отправь **пачку аккаунтов** одним сообщением.\n"
+        "Теперь отправь <b>пачку аккаунтов</b> одним сообщением.\n"
         "Каждый аккаунт — с новой строки.\n\n"
         "Поддерживаемые форматы строки:\n"
-        "- `логин;пароль`\n"
-        "- `логин пароль` (через пробел или TAB)\n"
-        "- `логин:пароль`\n"
-        "- `логин:пароль:прокси`\n"
-        "- `Логин: XXX | Пароль: YYY | ...`\n\n"
+        "- <code>логин;пароль</code>\n"
+        "- <code>логин пароль</code> (TAB или пробел)\n"
+        "- <code>логин:пароль</code>\n"
+        "- <code>логин:пароль:прокси</code>\n"
+        "- <code>Логин: XXX | Пароль: YYY | ...</code>\n\n"
         "Примеры:\n"
-        "`email@mail.com;pass123`\n"
-        "`email@mail.com\tpass123`\n"
-        "`79261234567:qwe123`\n"
-        "`login:pass:proxy:port`\n"
-        "`Логин: mail@mail.com | Пароль: Pass123 | Спасибо за покупку!❤️`\n",
-        parse_mode="Markdown"
+        "<code>email@mail.com;pass123</code>\n"
+        "<code>email@mail.com\tpass123</code>\n"
+        "<code>79261234567:qwe123</code>\n"
+        "<code>login:pass:proxy:port</code>\n"
+        "<code>Логин: mail@mail.com | Пароль: Pass123 | Спасибо за покупку!❤️</code>\n",
+        parse_mode="HTML",
+        reply_markup=ReplyKeyboardRemove(),
     )
 
 
 def parse_line(line: str):
     """
     Универсальный парсер одной строки.
-    Возвращает (login, password, proxy) или None, если строка нераспознаваема.
+    Возвращает (login, password, proxy) или None.
     """
-
-    original = line
     line = line.strip()
     if not line:
         return None
@@ -85,11 +114,9 @@ def parse_line(line: str):
     # 1) Формат "Логин: XXX | Пароль: YYY | ..."
     if "Логин:" in line and "Пароль:" in line:
         try:
-            # Логин
             after_login = line.split("Логин:", 1)[1]
             login_part = after_login.split("|", 1)[0].strip()
 
-            # Пароль
             after_pass = line.split("Пароль:", 1)[1]
             pass_part = after_pass.split("|", 1)[0].strip()
 
@@ -100,10 +127,9 @@ def parse_line(line: str):
             if login and password:
                 return login, password, proxy
         except Exception:
-            # Если вдруг не смогли распарсить — идём дальше
-            pass
+            pass  # Пойдём дальше по другим форматам
 
-    # 2) Формат с двоеточиями "login:pass" или "login:pass:proxy"
+    # 2) Формат с двоеточиями: login:pass или login:pass:proxy
     if ":" in line and "Логин:" not in line:
         parts = [p.strip() for p in line.split(":") if p.strip()]
         if len(parts) >= 2:
@@ -113,11 +139,10 @@ def parse_line(line: str):
             if login and password:
                 return login, password, proxy
 
-    # 3) Остальные: ; | TAB | пробелы
+    # 3) Остальное: ; | TAB | пробелы
     for sep in ["\t", ";", "|"]:
         line = line.replace(sep, " ")
 
-    # Замена многократных пробелов на один
     parts = [p.strip() for p in line.split(" ") if p.strip()]
     if len(parts) < 2:
         return None
@@ -134,9 +159,9 @@ def parse_line(line: str):
 
 def parse_block(text: str):
     """
-    Разбор целого блока текста (много строк).
+    Разбор блока текста на множество строк.
     Возвращает:
-      - список кортежей (login, password, proxy_or_None)
+      - список (login, password, proxy_or_None)
       - количество пропущенных строк
     """
     parsed = []
@@ -157,8 +182,8 @@ def parse_block(text: str):
     return parsed, skipped
 
 
-@router.message(UploadStates.enter_data)
-async def upload_save_data(message: Message, state: FSMContext):
+@router.message(UploadStates.entering_data)
+async def save_uploaded_resources(message: Message, state: FSMContext):
     data = await state.get_data()
     res_type = data["res_type"]
 
@@ -177,18 +202,18 @@ async def upload_save_data(message: Message, state: FSMContext):
             for login, password, proxy in rows:
                 await conn.execute(
                     DBQueries.INSERT_RESOURCE_BULK,
-                    res_type,      # type
+                    res_type,
                     login,
                     password,
                     proxy,
-                    0,             # buy_price (сейчас 0, при желании можно добавить шаг ввода цены)
+                    0,  # buy_price = 0, при желании потом добавим шаг с ценой
                 )
                 inserted += 1
 
     await state.clear()
 
     text = (
-        f"✅ Загрузка завершена.\n\n"
+        "✅ Загрузка завершена.\n\n"
         f"Тип ресурса: <b>{res_type}</b>\n"
         f"Добавлено в базу: <b>{inserted}</b>\n"
     )
