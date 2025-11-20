@@ -1,155 +1,82 @@
 class DBQueries:
-    # --------------------- СОЗДАНИЕ ТАБЛИЦ (на всякий случай) ---------------------
+    # ===============================
+    #         РЕСУРСЫ
+    # ===============================
 
-    CREATE_MANAGERS = """
-    CREATE TABLE IF NOT EXISTS managers (
-        tg_id BIGINT PRIMARY KEY,
-        name TEXT,
-        role TEXT DEFAULT 'manager'
-    );
-    """
-
-    CREATE_RESOURCES = """
-    CREATE TABLE IF NOT EXISTS resources (
-        id SERIAL PRIMARY KEY,
-        type TEXT NOT NULL,
-        login TEXT,
-        password TEXT,
-        proxy TEXT,
-        supplier_id INT,
-        buy_price NUMERIC DEFAULT 0,
-        status TEXT,
-        manager_tg_id BIGINT,
-        issue_datetime TIMESTAMP,
-        receipt_state TEXT,
-        lifetime_minutes INT,
-        end_datetime TIMESTAMP
-    );
-    """
-
-    CREATE_HISTORY = """
-    CREATE TABLE IF NOT EXISTS history (
-        id SERIAL PRIMARY KEY,
-        datetime TIMESTAMP DEFAULT NOW(),
-        resource_id INT,
-        manager_tg_id BIGINT,
-        type TEXT,
-        supplier_id INT,
-        price NUMERIC,
-        action TEXT,
-        receipt_state TEXT,
-        lifetime_minutes INT
-    );
-    """
-
-    # --------------------- ОТЧЁТЫ ---------------------
-
-    # Ежедневный отчёт по типам ресурсов (по состоянию таблицы resources)
-    REPORT_DAILY = """
-    SELECT type,
-           COUNT(*) FILTER (WHERE manager_tg_id IS NOT NULL) AS issued,
-           COUNT(*) FILTER (WHERE end_datetime IS NOT NULL)  AS closed
-    FROM resources
-    GROUP BY type
-    ORDER BY type;
-    """
-
-    # Отчёт по менеджерам за сегодня (по истории)
-    REPORT_MANAGER = """
-    SELECT manager_tg_id,
-           COUNT(*) AS total
-    FROM history
-    WHERE DATE(datetime) = CURRENT_DATE
-    GROUP BY manager_tg_id
-    ORDER BY total DESC;
-    """
-
-    # Финансовый отчёт за сегодня (без поставщиков, только типы ресурсов)
-    REPORT_FINANCE = """
-    SELECT type,
-           COUNT(*)              AS total_operations,
-           SUM(price)            AS total_spent,
-           AVG(price)            AS avg_price
-    FROM history
-    WHERE DATE(datetime) = CURRENT_DATE
-    GROUP BY type
-    ORDER BY type;
-    """
-
-    # --------------------- РАБОТА С РЕСУРСАМИ ---------------------
-
-    # Найти свободный ресурс нужного типа:
-    # статус = 'free' И ещё не привязан к менеджеру
+    # Получить свободный ресурс по типу
     GET_FREE_RESOURCE = """
     SELECT *
     FROM resources
-    WHERE type = $1
-      AND status = 'free'
-      AND manager_tg_id IS NULL
+    WHERE type = $1 AND status = 'free'
     ORDER BY id
     LIMIT 1;
     """
 
-    # Пометить ресурс выданным менеджеру
-    # status НЕ трогаем, чтобы не нарушать resources_status_check
+    # Пометить ресурс как выданный менеджеру
     ISSUE_RESOURCE = """
     UPDATE resources
-    SET manager_tg_id   = $1,
-        issue_datetime  = NOW(),
-        receipt_state   = 'new'
+    SET
+        status = 'busy',
+        manager_tg_id = $1,
+        issue_datetime = NOW(),
+        receipt_state = 'new'
     WHERE id = $2;
     """
 
-    # Закрыть ресурс (без изменения status)
-    CLOSE_RESOURCE = """
+    # Лог выдачи ресурса
+    HISTORY_LOG = """
+    INSERT INTO history (datetime, resource_id, manager_tg_id, type, supplier_id, price, action)
+    VALUES (NOW(), $1, $2, $3, NULL, NULL, 'issue');
+    """
+
+    # Мои ресурсы (ресурсы текущего менеджера)
+    MANAGER_RESOURCES = """
+    SELECT *
+    FROM resources
+    WHERE manager_tg_id = $1 AND status = 'busy';
+    """
+
+    # Подтвердить срок жизни ресурса
+    CONFIRM_LIFETIME = """
     UPDATE resources
-    SET end_datetime = NOW()
-    WHERE id = $1;
+    SET
+        receipt_state = 'confirmed',
+        lifetime_minutes = $1
+    WHERE id = $2;
     """
 
-    # Записать действие в историю
-    INSERT_HISTORY = """
-    INSERT INTO history (
-        resource_id,
-        manager_tg_id,
-        type,
-        supplier_id,
-        price,
-        action,
-        receipt_state,
-        lifetime_minutes
-    )
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8);
+    # ===============================
+    #           ПОКУПКИ
+    # ===============================
+
+    # Добавление купленного ресурса (без поставщика)
+    ADD_PURCHASE = """
+    INSERT INTO history (datetime, resource_id, manager_tg_id, type, supplier_id, price, action)
+    VALUES (NOW(), NULL, $1, $2, NULL, $3, 'purchase');
     """
 
-    # Алиас для старого кода (resource_issue.py использует HISTORY_LOG)
-    HISTORY_LOG = INSERT_HISTORY
+    # ===============================
+    #          ОТЧЁТЫ АДМИНА
+    # ===============================
 
-    # --------------------- МЕНЕДЖЕРЫ ---------------------
-
-    ADD_MANAGER = """
-    INSERT INTO managers (tg_id, name, role)
-    VALUES ($1, $2, $3)
-    ON CONFLICT (tg_id) DO NOTHING;
+    REPORT_RESOURCES = """
+    SELECT
+        COUNT(*) AS total,
+        COUNT(*) FILTER (WHERE status = 'free') AS free,
+        COUNT(*) FILTER (WHERE status = 'busy') AS busy,
+        COUNT(*) FILTER (WHERE status = 'expired') AS expired,
+        COUNT(*) FILTER (
+            WHERE DATE(issue_datetime) = CURRENT_DATE
+        ) AS issued_today
+    FROM resources;
     """
 
-    GET_MANAGER_ROLE = """
-    SELECT role FROM managers
-    WHERE tg_id = $1;
-    """
-
-    # --------------------- ДОБАВЛЕНИЕ РЕСУРСОВ ---------------------
-
-    # Добавление одного ресурса
-    ADD_RESOURCE = """
-    INSERT INTO resources (
-        type,
-        login,
-        password,
-        proxy,
-        supplier_id,
-        buy_price,
-        status
-    )
-    VALUES ($1, $2, $3, $4, $5, $6, 'free');
+    REPORT_FINANCE = """
+    SELECT
+        COUNT(*) AS purchases_today,
+        SUM(price) AS total_spent,
+        AVG(price) AS avg_price
+    FROM history
+    WHERE action = 'purchase'
+      AND DATE(datetime) = CURRENT_DATE;
     """
