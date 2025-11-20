@@ -1,52 +1,78 @@
 from aiogram import Router
-from aiogram.filters import CommandStart, Command
+from aiogram.filters import CommandStart, Command, F
 from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton
+
+from db.database import get_pool
+from bot.utils.queries import DBQueries
 
 router = Router()
 
 
-def get_manager_keyboard() -> ReplyKeyboardMarkup:
+def manager_menu_kb() -> ReplyKeyboardMarkup:
     """
-    Клавиатура менеджера (основное меню).
+    Клавиатура менеджера.
     """
-    kb = [
-        [KeyboardButton(text="📦 Получить ресурс")],
-        [KeyboardButton(text="⏱ Отметить срок жизни")],
-        [KeyboardButton(text="📋 Мои ресурсы")],
-    ]
     return ReplyKeyboardMarkup(
-        keyboard=kb,
+        keyboard=[
+            [KeyboardButton(text="📦 Получить ресурсы")],
+            [KeyboardButton(text="📋 Мои ресурсы")],
+            [KeyboardButton(text="⏱ Отметить срок жизни")],
+        ],
         resize_keyboard=True,
-        one_time_keyboard=False,
     )
 
 
 @router.message(CommandStart())
 async def cmd_start(message: Message):
     """
-    Стартовое сообщение для пользователя/менеджера.
+    Стартовое сообщение для менеджера.
     """
-    text = (
+    await message.answer(
         "👋 Привет! Это бот выдачи ресурсов.\n"
-        "Выбери действие на клавиатуре ниже:"
+        "Выбери действие на клавиатуре ниже:",
+        reply_markup=manager_menu_kb(),
     )
-    await message.answer(text, reply_markup=get_manager_keyboard())
 
 
 @router.message(Command("menu"))
 async def cmd_menu(message: Message):
     """
-    Команда /menu — просто повторно показывает клавиатуру.
+    Команда /menu — повторно показать меню.
     """
-    await message.answer("Выбери действие:", reply_markup=get_manager_keyboard())
+    await message.answer("Выбери действие:", reply_markup=manager_menu_kb())
 
 
 @router.message(Command("myid"))
 async def cmd_myid(message: Message):
     """
-    Служебная команда — показать Telegram ID пользователя.
-    Нужна, чтобы удобно занести ID в таблицу managers как admin/manager.
+    Показать Telegram ID (для добавления в managers).
     """
-    await message.answer(
-        f"Твой Telegram ID: <code>{message.from_user.id}</code>"
-    )
+    await message.answer(f"Твой Telegram ID: <code>{message.from_user.id}</code>")
+
+
+@router.message(F.text == "📋 Мои ресурсы")
+async def my_resources(message: Message):
+    """
+    Мини-кабинет менеджера: показать все активные ресурсы (status = 'busy').
+    """
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(DBQueries.GET_ISSUED_RESOURCES, message.from_user.id)
+
+    if not rows:
+        await message.answer("У тебя сейчас нет активных ресурсов.")
+        return
+
+    lines = ["📋 Твои активные ресурсы:\n"]
+    for r in rows:
+        login = r["login"]
+        password = r["password"]
+        proxy = r["proxy"]
+        r_type = r["type"]
+
+        line = f"• <b>{r_type}</b> — <code>{login}</code> | <code>{password}</code>"
+        if proxy:
+            line += f" | proxy: <code>{proxy}</code>"
+        lines.append(line)
+
+    await message.answer("\n".join(lines))
