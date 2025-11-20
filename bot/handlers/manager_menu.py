@@ -7,14 +7,20 @@ from bot.utils.queries import DBQueries
 
 router = Router()
 
+BACK_BUTTON_TEXT = "⬅️ Назад"
+
 
 def manager_menu_kb() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text="📦 Получить ресурсы")],
-            [KeyboardButton(text="📋 Мои ресурсы")],
-            [KeyboardButton(text="⏱ Отметить срок жизни")],
-            [KeyboardButton(text="⚙️ Статус ресурса")],
+            [
+                KeyboardButton(text="📦 Получить ресурсы"),
+                KeyboardButton(text="📋 Мои ресурсы"),
+            ],
+            [
+                KeyboardButton(text="⚙️ Статус ресурса"),
+                KeyboardButton(text="🔄 Обновить меню"),
+            ],
         ],
         resize_keyboard=True,
     )
@@ -30,8 +36,9 @@ async def cmd_start(message: Message):
 
 
 @router.message(Command("menu"))
+@router.message(F.text == "🔄 Обновить меню")
 async def cmd_menu(message: Message):
-    await message.answer("Выбери действие:", reply_markup=manager_menu_kb())
+    await message.answer("Главное меню:", reply_markup=manager_menu_kb())
 
 
 @router.message(Command("myid"))
