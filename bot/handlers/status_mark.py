@@ -5,6 +5,7 @@ from aiogram.fsm.state import StatesGroup, State
 
 from db.database import get_pool
 from bot.utils.queries import DBQueries
+from bot.handlers.manager_menu import manager_menu_kb, BACK_BUTTON_TEXT
 
 router = Router()
 
@@ -19,14 +20,56 @@ def status_choice_kb() -> ReplyKeyboardMarkup:
         keyboard=[
             [KeyboardButton(text="✅ Рабочий")],
             [KeyboardButton(text="❌ Не рабочий")],
+            [KeyboardButton(text=BACK_BUTTON_TEXT)],
         ],
         resize_keyboard=True,
         one_time_keyboard=True,
     )
 
 
+def back_only_kb() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[[KeyboardButton(text=BACK_BUTTON_TEXT)]],
+        resize_keyboard=True,
+    )
+
+
+async def _send_resources_list(message: Message, state: FSMContext):
+    """
+    Показываем список ресурсов из state['resources'].
+    Если пусто — выходим в меню.
+    """
+    data = await state.get_data()
+    resources = data.get("resources", [])
+
+    if not resources:
+        await state.clear()
+        await message.answer(
+            "Все ресурсы отмечены. Возвращаю в меню.",
+            reply_markup=manager_menu_kb(),
+        )
+        return False
+
+    text_lines = ["Выбери ресурс, которому хочешь выставить статус.\n"]
+    for idx, r in enumerate(resources, start=1):
+        text_lines.append(
+            f"{idx}) <b>{r['type']}</b> — <code>{r['login']}</code>"
+        )
+
+    text_lines.append(
+        f"\nНапиши номер ресурса (например: 1) или нажми «{BACK_BUTTON_TEXT}»."
+    )
+
+    await state.set_state(StatusStates.choosing_resource)
+    await message.answer("\n".join(text_lines), reply_markup=back_only_kb())
+    return True
+
+
 @router.message(F.text == "⚙️ Статус ресурса")
 async def start_status_mark(message: Message, state: FSMContext):
+    """
+    Старт диалога выставления статуса.
+    """
     pool = await get_pool()
     async with pool.acquire() as conn:
         rows = await conn.fetch(DBQueries.GET_ISSUED_RESOURCES, message.from_user.id)
@@ -36,8 +79,7 @@ async def start_status_mark(message: Message, state: FSMContext):
         return
 
     resources = []
-    text_lines = ["Выбери ресурс, которому хочешь выставить статус.\n"]
-    for idx, r in enumerate(rows, start=1):
+    for r in rows:
         resources.append(
             {
                 "id": r["id"],
@@ -47,22 +89,25 @@ async def start_status_mark(message: Message, state: FSMContext):
                 "type": r["type"],
             }
         )
-        line = f"{idx}) <b>{r['type']}</b> — <code>{r['login']}</code>"
-        text_lines.append(line)
 
-    await state.update_data(resources=resources)
-    await state.set_state(StatusStates.choosing_resource)
-
-    text_lines.append("\nНапиши номер ресурса (например: 1).")
-    await message.answer("\n".join(text_lines), reply_markup=ReplyKeyboardRemove())
+    await state.update_data(resources=resources, chosen_resource=None)
+    await _send_resources_list(message, state)
 
 
 @router.message(StatusStates.choosing_resource)
 async def pick_resource_index(message: Message, state: FSMContext):
+    """
+    Менеджер вводит номер ресурса (из списка).
+    """
+    text = message.text.strip()
+    if text == BACK_BUTTON_TEXT:
+        await state.clear()
+        await message.answer("Главное меню:", reply_markup=manager_menu_kb())
+        return
+
     data = await state.get_data()
     resources = data.get("resources", [])
 
-    text = message.text.strip()
     if not text.isdigit():
         await message.answer("Нужно отправить число (номер ресурса из списка). Попробуй ещё раз.")
         return
@@ -86,9 +131,20 @@ async def pick_resource_index(message: Message, state: FSMContext):
 
 @router.message(StatusStates.choosing_status)
 async def apply_status(message: Message, state: FSMContext):
+    """
+    Менеджер выбирает статус: Рабочий / Не рабочий.
+    После этого сразу предлагаем выбрать следующий ресурс,
+    пока список не закончится.
+    """
     text = message.text.strip()
+    if text == BACK_BUTTON_TEXT:
+        # Возвращаемся к выбору ресурса, список остаётся тем же
+        await _send_resources_list(message, state)
+        return
+
     data = await state.get_data()
     chosen = data.get("chosen_resource")
+    resources = data.get("resources", [])
 
     if not chosen:
         await message.answer("Что-то пошло не так, попробуй начать заново: ⚙️ Статус ресурса")
@@ -128,9 +184,14 @@ async def apply_status(message: Message, state: FSMContext):
                 action,
             )
 
-    await state.clear()
+    # Убираем этот ресурс из списка, чтобы не предлагать его второй раз
+    resources = [r for r in resources if r["id"] != resource_id]
+    await state.update_data(resources=resources, chosen_resource=None)
 
     await message.answer(
         f"Статус ресурса <code>{chosen['login']}</code> выставлен как <b>{status_text}</b>.",
         reply_markup=ReplyKeyboardRemove(),
     )
+
+    # Если остались ресурсы — предлагаем следующий
+    await _send_resources_list(message, state)
