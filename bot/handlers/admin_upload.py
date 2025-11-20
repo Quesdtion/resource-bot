@@ -1,5 +1,4 @@
-from aiogram import Router
-from aiogram import F
+from aiogram import Router, F
 from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
@@ -7,6 +6,7 @@ from aiogram.fsm.state import StatesGroup, State
 from db.database import get_pool
 from bot.utils.queries import DBQueries
 from bot.handlers.admin_menu import admin_menu_kb
+from bot.handlers.manager_menu import BACK_BUTTON_TEXT
 
 router = Router()
 
@@ -29,6 +29,7 @@ async def _is_admin(user_id: int) -> bool:
 def resource_type_kb() -> ReplyKeyboardMarkup:
     buttons = [[KeyboardButton(text=t)] for t in RESOURCE_TYPES]
     buttons.append([KeyboardButton(text="Другое")])
+    buttons.append([KeyboardButton(text=BACK_BUTTON_TEXT)])
     return ReplyKeyboardMarkup(
         keyboard=buttons,
         resize_keyboard=True,
@@ -53,10 +54,18 @@ async def upload_start(message: Message, state: FSMContext):
 async def set_upload_type(message: Message, state: FSMContext):
     text = message.text.strip()
 
+    if text == BACK_BUTTON_TEXT:
+        await state.clear()
+        await message.answer("Админ-меню:", reply_markup=admin_menu_kb())
+        return
+
     if text == "Другое":
         await message.answer(
             "Введи тип ресурса вручную (например: mamba_email, phone, vk и т.п.):",
-            reply_markup=ReplyKeyboardRemove(),
+            reply_markup=ReplyKeyboardMarkup(
+                keyboard=[[KeyboardButton(text=BACK_BUTTON_TEXT)]],
+                resize_keyboard=True,
+            ),
         )
         return
 
@@ -77,14 +86,12 @@ async def set_upload_type(message: Message, state: FSMContext):
         "- <code>логин:пароль</code>\n"
         "- <code>логин:пароль:прокси</code>\n"
         "- <code>Логин: XXX | Пароль: YYY | ...</code>\n\n"
-        "Примеры:\n"
-        "<code>email@mail.com;pass123</code>\n"
-        "<code>email@mail.com\tpass123</code>\n"
-        "<code>79261234567:qwe123</code>\n"
-        "<code>login:pass:proxy:port</code>\n"
-        "<code>Логин: mail@mail.com | Пароль: Pass123 | Спасибо за покупку!❤️</code>\n",
+        f"Чтобы отменить — нажми «{BACK_BUTTON_TEXT}».",
         parse_mode="HTML",
-        reply_markup=ReplyKeyboardRemove(),
+        reply_markup=ReplyKeyboardMarkup(
+            keyboard=[[KeyboardButton(text=BACK_BUTTON_TEXT)]],
+            resize_keyboard=True,
+        ),
     )
 
 
@@ -160,6 +167,11 @@ def parse_block(text: str):
 
 @router.message(UploadStates.entering_data)
 async def save_uploaded_resources(message: Message, state: FSMContext):
+    if message.text.strip() == BACK_BUTTON_TEXT:
+        await state.clear()
+        await message.answer("Загрузка отменена.", reply_markup=admin_menu_kb())
+        return
+
     data = await state.get_data()
     res_type = data["res_type"]
 
