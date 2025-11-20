@@ -35,11 +35,14 @@ class DBQueries:
     WHERE id = $2;
     """
 
-    # Все ресурсы, выданные менеджеру
+    # 🔥 ВАЖНО: Мои ресурсы — без нерабочих
+    # Показываем только те, у которых статус НЕ 'bad'
+    # (new / good / NULL)
     GET_ISSUED_RESOURCES = """
     SELECT *
     FROM resources
-    WHERE manager_tg_id = $1;
+    WHERE manager_tg_id = $1
+      AND (receipt_state IS NULL OR receipt_state != 'bad');
     """
 
     GET_RESOURCE_BY_ID = """
