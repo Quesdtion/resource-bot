@@ -7,6 +7,8 @@ from bot.utils.queries import DBQueries
 
 router = Router()
 
+BACK_BUTTON_TEXT = "⬅️ Назад"
+
 
 def admin_menu_kb() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
