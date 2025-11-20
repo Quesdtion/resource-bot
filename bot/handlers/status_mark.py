@@ -15,9 +15,6 @@ class StatusStates(StatesGroup):
 
 
 def status_choice_kb() -> ReplyKeyboardMarkup:
-    """
-    Клавиатура для выбора статуса ресурса.
-    """
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="✅ Рабочий")],
@@ -30,10 +27,6 @@ def status_choice_kb() -> ReplyKeyboardMarkup:
 
 @router.message(F.text == "⚙️ Статус ресурса")
 async def start_status_mark(message: Message, state: FSMContext):
-    """
-    Старт диалога выставления статуса ресурсу.
-    Показываем все ресурсы менеджера со статусом 'busy'.
-    """
     pool = await get_pool()
     async with pool.acquire() as conn:
         rows = await conn.fetch(DBQueries.GET_ISSUED_RESOURCES, message.from_user.id)
@@ -42,7 +35,6 @@ async def start_status_mark(message: Message, state: FSMContext):
         await message.answer("У тебя сейчас нет активных ресурсов для отметки статуса.")
         return
 
-    # Сохраняем список ресурсов в state
     resources = []
     text_lines = ["Выбери ресурс, которому хочешь выставить статус.\n"]
     for idx, r in enumerate(rows, start=1):
@@ -67,9 +59,6 @@ async def start_status_mark(message: Message, state: FSMContext):
 
 @router.message(StatusStates.choosing_resource)
 async def pick_resource_index(message: Message, state: FSMContext):
-    """
-    Менеджер вводит номер ресурса (из списка).
-    """
     data = await state.get_data()
     resources = data.get("resources", [])
 
@@ -97,9 +86,6 @@ async def pick_resource_index(message: Message, state: FSMContext):
 
 @router.message(StatusStates.choosing_status)
 async def apply_status(message: Message, state: FSMContext):
-    """
-    Менеджер выбирает статус: Рабочий / Не рабочий.
-    """
     text = message.text.strip()
     data = await state.get_data()
     chosen = data.get("chosen_resource")
@@ -128,14 +114,12 @@ async def apply_status(message: Message, state: FSMContext):
     pool = await get_pool()
     async with pool.acquire() as conn:
         async with conn.transaction():
-            # Обновляем статус ресурса (через receipt_state)
             await conn.execute(
                 mark_query,
                 resource_id,
                 manager_id,
             )
 
-            # Логируем изменение статуса в history
             await conn.execute(
                 DBQueries.HISTORY_STATUS_CHANGE,
                 resource_id,
