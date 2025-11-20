@@ -1,4 +1,5 @@
-from aiogram import Router, F
+from aiogram import Router
+from aiogram import F
 from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
@@ -9,8 +10,6 @@ from bot.handlers.admin_menu import admin_menu_kb
 
 router = Router()
 
-
-# Типы ресурсов для кнопок при загрузке
 RESOURCE_TYPES = ["mamba", "tabor", "bebo"]
 
 
@@ -20,9 +19,6 @@ class UploadStates(StatesGroup):
 
 
 async def _is_admin(user_id: int) -> bool:
-    """
-    Проверяем, что пользователь — админ (role='admin' в таблице managers).
-    """
     pool = await get_pool()
     async with pool.acquire() as conn:
         row = await conn.fetchrow(DBQueries.CHECK_MANAGER_ROLE, user_id)
@@ -31,12 +27,8 @@ async def _is_admin(user_id: int) -> bool:
 
 
 def resource_type_kb() -> ReplyKeyboardMarkup:
-    """
-    Клавиатура выбора типа ресурса при загрузке.
-    """
     buttons = [[KeyboardButton(text=t)] for t in RESOURCE_TYPES]
     buttons.append([KeyboardButton(text="Другое")])
-
     return ReplyKeyboardMarkup(
         keyboard=buttons,
         resize_keyboard=True,
@@ -46,9 +38,6 @@ def resource_type_kb() -> ReplyKeyboardMarkup:
 
 @router.message(F.text == "📦 Загрузить ресурсы")
 async def upload_start(message: Message, state: FSMContext):
-    """
-    Старт диалога загрузки ресурсов.
-    """
     if not await _is_admin(message.from_user.id):
         await message.answer("Нет доступа")
         return
@@ -69,13 +58,10 @@ async def set_upload_type(message: Message, state: FSMContext):
             "Введи тип ресурса вручную (например: mamba_email, phone, vk и т.п.):",
             reply_markup=ReplyKeyboardRemove(),
         )
-        # Остаёмся в том же состоянии, ждём текста
         return
 
-    # Если нажата готовая кнопка или введён свой тип
     res_type = text.lower()
-
-    if res_type == "":
+    if not res_type:
         await message.answer("Тип не может быть пустым. Введи тип ещё раз.")
         return
 
@@ -103,15 +89,11 @@ async def set_upload_type(message: Message, state: FSMContext):
 
 
 def parse_line(line: str):
-    """
-    Универсальный парсер одной строки.
-    Возвращает (login, password, proxy) или None.
-    """
     line = line.strip()
     if not line:
         return None
 
-    # 1) Формат "Логин: XXX | Пароль: YYY | ..."
+    # Логин: XXX | Пароль: YYY
     if "Логин:" in line and "Пароль:" in line:
         try:
             after_login = line.split("Логин:", 1)[1]
@@ -127,9 +109,9 @@ def parse_line(line: str):
             if login and password:
                 return login, password, proxy
         except Exception:
-            pass  # Пойдём дальше по другим форматам
+            pass
 
-    # 2) Формат с двоеточиями: login:pass или login:pass:proxy
+    # login:pass(:proxy)
     if ":" in line and "Логин:" not in line:
         parts = [p.strip() for p in line.split(":") if p.strip()]
         if len(parts) >= 2:
@@ -139,7 +121,7 @@ def parse_line(line: str):
             if login and password:
                 return login, password, proxy
 
-    # 3) Остальное: ; | TAB | пробелы
+    # ;, TAB, |
     for sep in ["\t", ";", "|"]:
         line = line.replace(sep, " ")
 
@@ -158,12 +140,6 @@ def parse_line(line: str):
 
 
 def parse_block(text: str):
-    """
-    Разбор блока текста на множество строк.
-    Возвращает:
-      - список (login, password, proxy_or_None)
-      - количество пропущенных строк
-    """
     parsed = []
     skipped = 0
 
@@ -206,7 +182,7 @@ async def save_uploaded_resources(message: Message, state: FSMContext):
                     login,
                     password,
                     proxy,
-                    0,  # buy_price = 0, при желании потом добавим шаг с ценой
+                    0,
                 )
                 inserted += 1
 
