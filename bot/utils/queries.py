@@ -1,82 +1,100 @@
 class DBQueries:
-    # ===============================
-    #         РЕСУРСЫ
-    # ===============================
+    # ===========================
+    #        МЕНЕДЖЕРЫ
+    # ===========================
 
-    # Получить свободный ресурс по типу
-    GET_FREE_RESOURCE = """
+    CHECK_MANAGER_ROLE = """
+    SELECT role FROM managers WHERE tg_id = $1;
+    """
+
+    GET_FREE_RESOURCE_BY_TYPE = """
     SELECT *
     FROM resources
     WHERE type = $1 AND status = 'free'
-    ORDER BY id
+    ORDER BY id ASC
     LIMIT 1;
     """
 
-    # Пометить ресурс как выданный менеджеру
     ISSUE_RESOURCE = """
     UPDATE resources
-    SET
-        status = 'busy',
+    SET status = 'busy',
         manager_tg_id = $1,
         issue_datetime = NOW(),
         receipt_state = 'new'
     WHERE id = $2;
     """
 
-    # Лог выдачи ресурса
     HISTORY_LOG = """
-    INSERT INTO history (datetime, resource_id, manager_tg_id, type, supplier_id, price, action)
-    VALUES (NOW(), $1, $2, $3, NULL, NULL, 'issue');
+    INSERT INTO history (datetime, resource_id, manager_tg_id, type, action, price)
+    VALUES (NOW(), $1, $2, $3, 'issued', NULL);
     """
 
-    # Мои ресурсы (ресурсы текущего менеджера)
-    MANAGER_RESOURCES = """
+    # ===========================
+    #     СРОК ЖИЗНИ / ЛАЙФТАЙМ
+    # ===========================
+
+    SET_LIFETIME = """
+    UPDATE resources
+    SET lifetime_minutes = $1,
+        receipt_state = 'used',
+        end_datetime = NOW()
+    WHERE id = $2 AND manager_tg_id = $3;
+    """
+
+    HISTORY_LIFETIME = """
+    INSERT INTO history (datetime, resource_id, manager_tg_id, type, action, lifetime_minutes)
+    VALUES (NOW(), $1, $2, $3, 'lifetime_set', $4);
+    """
+
+    GET_ISSUED_RESOURCES = """
     SELECT *
     FROM resources
     WHERE manager_tg_id = $1 AND status = 'busy';
     """
 
-    # Подтвердить срок жизни ресурса
-    CONFIRM_LIFETIME = """
-    UPDATE resources
-    SET
-        receipt_state = 'confirmed',
-        lifetime_minutes = $1
-    WHERE id = $2;
-    """
-
-    # ===============================
-    #           ПОКУПКИ
-    # ===============================
-
-    # Добавление купленного ресурса (без поставщика)
-    ADD_PURCHASE = """
-    INSERT INTO history (datetime, resource_id, manager_tg_id, type, supplier_id, price, action)
-    VALUES (NOW(), NULL, $1, $2, NULL, $3, 'purchase');
-    """
-
-    # ===============================
-    #          ОТЧЁТЫ АДМИНА
-    # ===============================
+    # ===========================
+    #       АДМИН – ОТЧЁТЫ
+    # ===========================
 
     REPORT_RESOURCES = """
     SELECT
-        COUNT(*) AS total,
-        COUNT(*) FILTER (WHERE status = 'free') AS free,
-        COUNT(*) FILTER (WHERE status = 'busy') AS busy,
-        COUNT(*) FILTER (WHERE status = 'expired') AS expired,
-        COUNT(*) FILTER (
-            WHERE DATE(issue_datetime) = CURRENT_DATE
-        ) AS issued_today
-    FROM resources;
+        (SELECT COUNT(*) FROM resources) AS total,
+        (SELECT COUNT(*) FROM resources WHERE status = 'free') AS free,
+        (SELECT COUNT(*) FROM resources WHERE status = 'busy') AS busy,
+        (SELECT COUNT(*) FROM resources WHERE receipt_state = 'used' AND end_datetime::date = NOW()::date) AS expired_today,
+        (SELECT COUNT(*) FROM history WHERE action = 'issued' AND datetime::date = NOW()::date) AS issued_today;
     """
 
     REPORT_FINANCE = """
     SELECT
-        COUNT(*) AS purchases_today,
-        SUM(price) AS total_spent,
-        AVG(price) AS avg_price
+        COALESCE(SUM(price), 0) AS total_purchase_cost
     FROM history
     WHERE action = 'purchase'
-      AND DATE(datetime) = CURRENT_DATE;
+      AND datetime::date = NOW()::date;
+    """
+
+    # ===========================
+    #     АДМИН – ВЫГРУЗКА/ЗАГРУЗКА
+    # ===========================
+
+    INSERT_RESOURCE_BULK = """
+    INSERT INTO resources (type, login, password, proxy, buy_price, status)
+    VALUES ($1, $2, $3, $4, $5, 'free');
+    """
+
+    INSERT_PURCHASE_LOG = """
+    INSERT INTO history (datetime, resource_id, manager_tg_id, type, action, price)
+    VALUES (NOW(), $1, NULL, $2, 'purchase', $3);
+    """
+
+    # ===========================
+    #        ПРОЧЕЕ
+    # ===========================
+
+    GET_MANAGER = """
+    SELECT * FROM managers WHERE tg_id = $1;
+    """
+
+    GET_RESOURCE_BY_ID = """
+    SELECT * FROM resources WHERE id = $1;
     """
