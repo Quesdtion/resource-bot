@@ -9,7 +9,6 @@ from db.database import get_pool
 from bot.handlers import (
     manager_menu,
     resource_issue,
-    lifetime,
     admin_menu,
     reports,
     admin_upload,
@@ -29,16 +28,15 @@ async def main():
     bot = Bot(token=BOT_TOKEN, parse_mode="HTML")
     dp = Dispatcher()
 
-    # Инициализируем пул БД (если внутри get_pool кэш — он сам разрулит)
+    # Инициализируем пул БД
     await get_pool()
 
     # Мидлварь ролей
     dp.message.middleware(RoleMiddleware())
 
-    # Подключаем все роутеры
+    # Подключаем роутеры
     dp.include_router(manager_menu.router)
     dp.include_router(resource_issue.router)
-    dp.include_router(lifetime.router)
     dp.include_router(admin_menu.router)
     dp.include_router(reports.router)
     dp.include_router(admin_upload.router)
