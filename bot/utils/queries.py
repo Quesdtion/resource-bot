@@ -15,27 +15,30 @@ class DBQueries:
     #        РЕСУРСЫ
     # ===========================
 
+    -- Свободный ресурс = manager_tg_id IS NULL
     GET_FREE_RESOURCE_BY_TYPE = """
     SELECT *
     FROM resources
-    WHERE type = $1 AND status = 'free'
+    WHERE type = $1
+      AND manager_tg_id IS NULL
     ORDER BY id ASC
     LIMIT 1;
     """
 
+    -- Выдаём ресурс: НЕ трогаем status, только вешаем менеджера
     ISSUE_RESOURCE = """
     UPDATE resources
-    SET status = 'busy',
-        manager_tg_id = $1,
+    SET manager_tg_id = $1,
         issue_datetime = NOW(),
         receipt_state = 'new'
     WHERE id = $2;
     """
 
+    -- Ресурсы менеджера = у кого manager_tg_id = $1
     GET_ISSUED_RESOURCES = """
     SELECT *
     FROM resources
-    WHERE manager_tg_id = $1 AND status = 'busy';
+    WHERE manager_tg_id = $1;
     """
 
     GET_RESOURCE_BY_ID = """
@@ -46,7 +49,7 @@ class DBQueries:
 
     # ===========================
     #      ОТМЕТКА СТАТУСА
-    #   (receipt_state: good/bad)
+    #   (good / bad в receipt_state)
     # ===========================
 
     MARK_RESOURCE_GOOD = """
@@ -132,8 +135,8 @@ class DBQueries:
     REPORT_RESOURCES = """
     SELECT
         (SELECT COUNT(*) FROM resources) AS total,
-        (SELECT COUNT(*) FROM resources WHERE status = 'free') AS free,
-        (SELECT COUNT(*) FROM resources WHERE status = 'busy') AS busy,
+        (SELECT COUNT(*) FROM resources WHERE manager_tg_id IS NULL) AS free,
+        (SELECT COUNT(*) FROM resources WHERE manager_tg_id IS NOT NULL) AS busy,
         (SELECT COUNT(*) FROM resources
             WHERE receipt_state = 'used'
               AND end_datetime::date = NOW()::date) AS expired_today,
