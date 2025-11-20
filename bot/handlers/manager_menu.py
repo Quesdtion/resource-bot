@@ -17,6 +17,7 @@ def manager_menu_kb() -> ReplyKeyboardMarkup:
             [KeyboardButton(text="📦 Получить ресурсы")],
             [KeyboardButton(text="📋 Мои ресурсы")],
             [KeyboardButton(text="⏱ Отметить срок жизни")],
+            [KeyboardButton(text="⚙️ Статус ресурса")],  # <-- НОВАЯ КНОПКА
         ],
         resize_keyboard=True,
     )
