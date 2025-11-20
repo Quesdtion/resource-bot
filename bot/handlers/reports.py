@@ -1,5 +1,3 @@
-# bot/handlers/reports.py
-
 from aiogram import Router, F
 from aiogram.types import Message
 
@@ -9,45 +7,57 @@ from bot.utils.queries import DBQueries
 router = Router()
 
 
-# 📊 Отчёт по ресурсам
 @router.message(F.text == "📊 Отчёт по ресурсам")
-async def report_resources(message: Message) -> None:
+async def report_resources(message: Message):
+    """
+    Отчёт по ресурсам:
+    - всего
+    - свободно
+    - в работе
+    - использовано сегодня
+    - выдано сегодня
+    """
     pool = await get_pool()
     async with pool.acquire() as conn:
         row = await conn.fetchrow(DBQueries.REPORT_RESOURCES)
 
-    if not row:
-        await message.answer("За сегодня данных по ресурсам нет.")
+    if not row or row["total"] is None or row["total"] == 0:
+        await message.answer("ℹ️ В базе пока нет ресурсов.")
         return
 
     text = (
-        "📊 Отчёт по ресурсам за сегодня\n"
-        f"Всего ресурсов: {row['total']}\n"
-        f"Свободно: {row['free']}\n"
-        f"В работе: {row['busy']}\n"
-        f"Просрочено: {row['expired']}\n"
-        f"Выдано сегодня: {row['issued_today']}"
+        "📊 <b>Отчёт по ресурсам за сегодня</b>\n\n"
+        f"Всего ресурсов: <b>{row['total']}</b>\n"
+        f"Свободно: <b>{row['free']}</b>\n"
+        f"В работе: <b>{row['busy']}</b>\n"
+        f"Использовано сегодня: <b>{row['expired_today']}</b>\n"
+        f"Выдано сегодня: <b>{row['issued_today']}</b>\n"
     )
 
     await message.answer(text)
 
 
-# 💰 Финансовый отчёт
 @router.message(F.text == "💰 Финансовый отчёт")
-async def report_finance(message: Message) -> None:
+async def report_finance(message: Message):
+    """
+    Финансовый отчёт:
+    - сколько потрачено на закупку ресурсов сегодня.
+    (используется поле total_purchase_cost из history.action = 'purchase')
+    """
     pool = await get_pool()
     async with pool.acquire() as conn:
         row = await conn.fetchrow(DBQueries.REPORT_FINANCE)
 
-    if not row or row["total_spent"] is None:
-        await message.answer("За сегодня финансовых данных нет.")
+    # В REPORT_FINANCE мы считаем только total_purchase_cost
+    total = row["total_purchase_cost"] if row and row["total_purchase_cost"] is not None else 0
+
+    if total == 0:
+        await message.answer("💰 За сегодня ещё не было учтённых покупок ресурсов.")
         return
 
     text = (
-        "💰 Финансовый отчёт за сегодня\n"
-        f"Куплено ресурсов: {row['resources_bought']} шт.\n"
-        f"Потрачено на закупку: {row['total_spent']} у.е.\n"
-        f"Средняя цена за ресурс: {row['avg_price']:.2f} у.е."
+        "💰 <b>Финансовый отчёт за сегодня</b>\n\n"
+        f"Всего потрачено на закупку ресурсов: <b>{total}</b>\n"
     )
 
     await message.answer(text)
