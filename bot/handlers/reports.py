@@ -9,14 +9,6 @@ router = Router()
 
 @router.message(F.text == "📊 Отчёт по ресурсам")
 async def report_resources(message: Message):
-    """
-    Отчёт по ресурсам:
-    - всего
-    - свободно
-    - в работе
-    - использовано сегодня
-    - выдано сегодня
-    """
     pool = await get_pool()
     async with pool.acquire() as conn:
         row = await conn.fetchrow(DBQueries.REPORT_RESOURCES)
@@ -39,16 +31,10 @@ async def report_resources(message: Message):
 
 @router.message(F.text == "💰 Финансовый отчёт")
 async def report_finance(message: Message):
-    """
-    Финансовый отчёт:
-    - сколько потрачено на закупку ресурсов сегодня.
-    (используется поле total_purchase_cost из history.action = 'purchase')
-    """
     pool = await get_pool()
     async with pool.acquire() as conn:
         row = await conn.fetchrow(DBQueries.REPORT_FINANCE)
 
-    # В REPORT_FINANCE мы считаем только total_purchase_cost
     total = row["total_purchase_cost"] if row and row["total_purchase_cost"] is not None else 0
 
     if total == 0:
