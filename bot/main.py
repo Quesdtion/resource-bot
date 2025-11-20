@@ -13,6 +13,7 @@ from bot.handlers import (
     admin_menu,
     reports,
     admin_upload,
+    status_mark,  # <-- НОВЫЙ ХЕНДЛЕР СТАТУСОВ
 )
 
 from bot.middlewares.role import RoleMiddleware
@@ -25,25 +26,26 @@ async def main():
     if not BOT_TOKEN:
         raise RuntimeError("BOT_TOKEN не задан в переменных окружения")
 
-    # Бот
+    # Инициализируем бота
     bot = Bot(token=BOT_TOKEN, parse_mode="HTML")
     dp = Dispatcher()
 
-    # Подключение к БД, кладём в bot.db (некоторые хендлеры этим пользуются)
+    # Подключение к БД
     bot.db = await get_pool()
 
-    # Мидлварь ролей (manager / admin)
+    # Мидлварь ролей
     dp.message.middleware(RoleMiddleware())
 
-    # Подключаем роутеры
+    # Роутеры
     dp.include_router(manager_menu.router)
     dp.include_router(resource_issue.router)
     dp.include_router(lifetime.router)
     dp.include_router(admin_menu.router)
     dp.include_router(reports.router)
     dp.include_router(admin_upload.router)
+    dp.include_router(status_mark.router)  # <-- ПОДКЛЮЧАЕМ НОВЫЙ
 
-    # Планировщик (если у тебя есть задачи по расписанию)
+    # Планировщик (если используешь)
     setup_scheduler(bot)
 
     logging.info("Bot started")
