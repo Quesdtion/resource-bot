@@ -15,9 +15,6 @@ class IssueStates(StatesGroup):
 
 
 def quantity_kb() -> ReplyKeyboardMarkup:
-    """
-    Клавиатура с выбором количества 1–10.
-    """
     row1 = [KeyboardButton(text=str(i)) for i in range(1, 6)]
     row2 = [KeyboardButton(text=str(i)) for i in range(6, 11)]
     return ReplyKeyboardMarkup(
@@ -29,9 +26,6 @@ def quantity_kb() -> ReplyKeyboardMarkup:
 
 @router.message(F.text == "📦 Получить ресурсы")
 async def start_issue(message: Message, state: FSMContext):
-    """
-    Старт диалога выдачи ресурсов менеджеру.
-    """
     await state.set_state(IssueStates.choosing_type)
     await message.answer(
         "Введи тип ресурса, который тебе нужен (например: mamba, tabor, bebo)."
@@ -77,7 +71,6 @@ async def issue_resources(message: Message, state: FSMContext):
     async with pool.acquire() as conn:
         async with conn.transaction():
             for _ in range(qty):
-                # Берём свободный ресурс нужного типа
                 resource = await conn.fetchrow(
                     DBQueries.GET_FREE_RESOURCE_BY_TYPE,
                     res_type,
@@ -85,14 +78,12 @@ async def issue_resources(message: Message, state: FSMContext):
                 if not resource:
                     break
 
-                # Обновляем статус ресурса
                 await conn.execute(
                     DBQueries.ISSUE_RESOURCE,
                     manager_id,
                     resource["id"],
                 )
 
-                # Логируем выдачу
                 await conn.execute(
                     DBQueries.HISTORY_LOG,
                     resource["id"],
