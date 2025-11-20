@@ -1,81 +1,133 @@
-from aiogram import Router, F, types
+from aiogram import Router, F
+from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import StatesGroup, State
+
+from db.database import get_pool
 from bot.utils.queries import DBQueries
 
 router = Router()
 
-# Отображаемые названия типов -> значения в базе
-TYPES = {
-    "Мамба": "mamba",
-    "Табор": "tabor",
-    "Бебо": "bebo",
-}
+
+class IssueStates(StatesGroup):
+    choosing_type = State()
+    choosing_quantity = State()
 
 
-@router.message(F.text == "📦 Получить ресурс")
-async def choose_type(message: types.Message):
+def quantity_kb() -> ReplyKeyboardMarkup:
     """
-    Показываем менеджеру выбор типа ресурса.
+    Клавиатура с выбором количества 1–10.
     """
-    kb = types.ReplyKeyboardMarkup(
-        keyboard=[
-            [types.KeyboardButton(text="Мамба")],
-            [types.KeyboardButton(text="Табор")],
-            [types.KeyboardButton(text="Бебо")],
-        ],
+    row1 = [KeyboardButton(text=str(i)) for i in range(1, 6)]
+    row2 = [KeyboardButton(text=str(i)) for i in range(6, 11)]
+    return ReplyKeyboardMarkup(
+        keyboard=[row1, row2],
         resize_keyboard=True,
+        one_time_keyboard=True,
     )
-    await message.answer("Выбери тип ресурса:", reply_markup=kb)
 
 
-@router.message(F.text.in_(list(TYPES.keys())))
-async def issue_resource(message: types.Message):
+@router.message(F.text == "📦 Получить ресурсы")
+async def start_issue(message: Message, state: FSMContext):
     """
-    Выдаём первый свободный ресурс нужного типа и логируем действие в history.
+    Старт диалога выдачи ресурсов менеджеру.
     """
-    resource_type = TYPES[message.text]
+    await state.set_state(IssueStates.choosing_type)
+    await message.answer(
+        "Введи тип ресурса, который тебе нужен (например: mamba, tabor, bebo)."
+    )
 
-    pool = message.bot.db
+
+@router.message(IssueStates.choosing_type)
+async def set_type(message: Message, state: FSMContext):
+    res_type = message.text.strip().lower()
+    if not res_type:
+        await message.answer("Тип не может быть пустым. Введи тип ресурса ещё раз.")
+        return
+
+    await state.update_data(res_type=res_type)
+    await state.set_state(IssueStates.choosing_quantity)
+
+    await message.answer(
+        "Сколько ресурсов тебе нужно (от 1 до 10)?",
+        reply_markup=quantity_kb(),
+    )
+
+
+@router.message(IssueStates.choosing_quantity)
+async def issue_resources(message: Message, state: FSMContext):
+    text = message.text.strip()
+
+    if not text.isdigit():
+        await message.answer("Нужно число от 1 до 10. Выбери на клавиатуре.")
+        return
+
+    qty = int(text)
+    if qty < 1 or qty > 10:
+        await message.answer("Можно запросить от 1 до 10 ресурсов.")
+        return
+
+    data = await state.get_data()
+    res_type = data["res_type"]
+    manager_id = message.from_user.id
+
+    pool = await get_pool()
+    issued = []
+
     async with pool.acquire() as conn:
-        # Берём свободный ресурс
-        resource = await conn.fetchrow(DBQueries.GET_FREE_RESOURCE, resource_type)
-        if not resource:
-            await message.answer("❗ Свободных ресурсов этого типа сейчас нет.")
-            return
+        async with conn.transaction():
+            for _ in range(qty):
+                # Берём свободный ресурс нужного типа
+                resource = await conn.fetchrow(
+                    DBQueries.GET_FREE_RESOURCE_BY_TYPE,
+                    res_type,
+                )
+                if not resource:
+                    break
 
-        # Помечаем ресурс выданным (ставим manager_tg_id, время, receipt_state='new')
-        await conn.execute(
-            DBQueries.ISSUE_RESOURCE,
-            message.from_user.id,
-            resource["id"],
+                # Обновляем статус ресурса
+                await conn.execute(
+                    DBQueries.ISSUE_RESOURCE,
+                    manager_id,
+                    resource["id"],
+                )
+
+                # Логируем выдачу
+                await conn.execute(
+                    DBQueries.HISTORY_LOG,
+                    resource["id"],
+                    manager_id,
+                    res_type,
+                )
+
+                issued.append(resource)
+
+    await state.clear()
+
+    await message.answer(
+        "Готово.",
+        reply_markup=ReplyKeyboardRemove(),
+    )
+
+    if not issued:
+        await message.answer(
+            f"Свободных ресурсов типа <b>{res_type}</b> сейчас нет. "
+            f"Попроси администратора загрузить новые."
         )
+        return
 
-        # Пишем в историю
-        await conn.execute(
-            DBQueries.INSERT_HISTORY,
-            resource["id"],                 # resource_id
-            message.from_user.id,           # manager_tg_id
-            resource["type"],               # type
-            resource["supplier_id"],        # supplier_id
-            resource["buy_price"],          # price
-            "issue",                        # action
-            resource["receipt_state"],      # receipt_state
-            resource["lifetime_minutes"],   # lifetime_minutes
-        )
-
-    # Формируем текст для менеджера
-    text_lines = [
-        "📦 <b>Ресурс выдан</b>",
-        f"ID: <b>{resource['id']}</b>",
-        f"Тип: <b>{resource['type']}</b>",
-        "",
+    lines = [
+        f"📦 Выдано ресурсов: <b>{len(issued)}</b> (тип: <b>{res_type}</b>)\n"
     ]
+    for idx, r in enumerate(issued, start=1):
+        login = r["login"]
+        password = r["password"]
+        proxy = r["proxy"]
 
-    if resource.get("login"):
-        text_lines.append(f"🔑 Логин: <code>{resource['login']}</code>")
-    if resource.get("password"):
-        text_lines.append(f"🔒 Пароль: <code>{resource['password']}</code>")
-    if resource.get("proxy"):
-        text_lines.append(f"🌐 Прокси: <code>{resource['proxy']}</code>")
+        line = f"{idx}) <code>{login}</code> | <code>{password}</code>"
+        if proxy:
+            line += f" | proxy: <code>{proxy}</code>"
 
-    text = "\n".join(text_lines)
-    await message.answer(text)
+        lines.append(line)
+
+    await message.answer("\n".join(lines))
