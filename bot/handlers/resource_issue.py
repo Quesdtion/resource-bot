@@ -1,5 +1,10 @@
 from aiogram import Router, F
-from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
+from aiogram.types import (
+    Message,
+    ReplyKeyboardMarkup,
+    KeyboardButton,
+    ReplyKeyboardRemove,
+)
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
 
@@ -9,10 +14,25 @@ from bot.handlers.manager_menu import manager_menu_kb, BACK_BUTTON_TEXT
 
 router = Router()
 
+# Типы ресурсов, которые чаще всего используете
+RESOURCE_TYPES = ["mamba", "tabor", "bebo"]
+
 
 class IssueStates(StatesGroup):
     choosing_type = State()
+    choosing_custom_type = State()
     choosing_quantity = State()
+
+
+def resource_type_kb() -> ReplyKeyboardMarkup:
+    buttons = [[KeyboardButton(text=t)] for t in RESOURCE_TYPES]
+    buttons.append([KeyboardButton(text="Другое")])
+    buttons.append([KeyboardButton(text=BACK_BUTTON_TEXT)])
+    return ReplyKeyboardMarkup(
+        keyboard=buttons,
+        resize_keyboard=True,
+        one_time_keyboard=True,
+    )
 
 
 def quantity_kb() -> ReplyKeyboardMarkup:
@@ -30,26 +50,34 @@ def quantity_kb() -> ReplyKeyboardMarkup:
 async def start_issue(message: Message, state: FSMContext):
     await state.set_state(IssueStates.choosing_type)
     await message.answer(
-        "Введи тип ресурса, который тебе нужен (например: mamba, tabor, bebo).\n\n"
-        f"Или нажми «{BACK_BUTTON_TEXT}» чтобы вернуться в меню.",
-        reply_markup=ReplyKeyboardMarkup(
-            keyboard=[[KeyboardButton(text=BACK_BUTTON_TEXT)]],
-            resize_keyboard=True,
-        ),
+        "Выбери тип ресурса, который тебе нужен:",
+        reply_markup=resource_type_kb(),
     )
 
 
 @router.message(IssueStates.choosing_type)
-async def set_type(message: Message, state: FSMContext):
+async def choose_type(message: Message, state: FSMContext):
     text = message.text.strip()
+
     if text == BACK_BUTTON_TEXT:
         await state.clear()
         await message.answer("Главное меню:", reply_markup=manager_menu_kb())
         return
 
+    if text == "Другое":
+        await state.set_state(IssueStates.choosing_custom_type)
+        await message.answer(
+            "Введи тип ресурса вручную (например: phone, vk и т.п.):",
+            reply_markup=ReplyKeyboardMarkup(
+                keyboard=[[KeyboardButton(text=BACK_BUTTON_TEXT)]],
+                resize_keyboard=True,
+            ),
+        )
+        return
+
     res_type = text.lower()
-    if not res_type:
-        await message.answer("Тип не может быть пустым. Введи тип ресурса ещё раз.")
+    if res_type not in RESOURCE_TYPES:
+        await message.answer("Выбери тип ресурсов с клавиатуры или нажми «Другое».")
         return
 
     await state.update_data(res_type=res_type)
@@ -61,13 +89,44 @@ async def set_type(message: Message, state: FSMContext):
     )
 
 
+@router.message(IssueStates.choosing_custom_type)
+async def choose_custom_type(message: Message, state: FSMContext):
+    text = message.text.strip()
+
+    if text == BACK_BUTTON_TEXT:
+        await state.set_state(IssueStates.choosing_type)
+        await message.answer(
+            "Выбери тип ресурса:",
+            reply_markup=resource_type_kb(),
+        )
+        return
+
+    if not text:
+        await message.answer("Тип не может быть пустым. Введи тип ещё раз.")
+        return
+
+    res_type = text.lower()
+    await state.update_data(res_type=res_type)
+    await state.set_state(IssueStates.choosing_quantity)
+
+    await message.answer(
+        f"Тип ресурса: <b>{res_type}</b>\n\n"
+        "Сколько ресурсов тебе нужно (от 1 до 10)?",
+        reply_markup=quantity_kb(),
+    )
+
+
 @router.message(IssueStates.choosing_quantity)
 async def issue_resources(message: Message, state: FSMContext):
     text = message.text.strip()
 
     if text == BACK_BUTTON_TEXT:
-        await state.clear()
-        await message.answer("Главное меню:", reply_markup=manager_menu_kb())
+        # Возвращаемся к выбору типа
+        await state.set_state(IssueStates.choosing_type)
+        await message.answer(
+            "Выбери тип ресурса:",
+            reply_markup=resource_type_kb(),
+        )
         return
 
     if not text.isdigit():
@@ -113,10 +172,7 @@ async def issue_resources(message: Message, state: FSMContext):
 
     await state.clear()
 
-    await message.answer(
-        "Готово.",
-        reply_markup=ReplyKeyboardRemove(),
-    )
+    await message.answer("Готово.", reply_markup=ReplyKeyboardRemove())
 
     if not issued:
         await message.answer(
