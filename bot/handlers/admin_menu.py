@@ -9,33 +9,28 @@ router = Router()
 
 
 def admin_menu_kb() -> ReplyKeyboardMarkup:
-    """
-    Клавиатура админа.
-    """
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="📊 Отчёт по ресурсам")],
             [KeyboardButton(text="💰 Финансовый отчёт")],
             [KeyboardButton(text="📦 Загрузить ресурсы")],
         ],
-        resize_keyboard=True
+        resize_keyboard=True,
     )
+
+
+async def _is_admin(user_id: int) -> bool:
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(DBQueries.CHECK_MANAGER_ROLE, user_id)
+
+    return bool(row and row["role"] == "admin")
 
 
 @router.message(Command("admin"))
-async def admin_panel(message: Message):
-    """
-    Открыть админ-панель, если пользователь с role='admin' в таблице managers.
-    """
-    pool = await get_pool()
-    async with pool.acquire() as conn:
-        row = await conn.fetchrow(DBQueries.CHECK_MANAGER_ROLE, message.from_user.id)
-
-    if not row or row["role"] != "admin":
-        await message.answer("Нет доступа")
+async def cmd_admin(message: Message):
+    if not await _is_admin(message.from_user.id):
+        await message.answer("⛔ Нет доступа.")
         return
 
-    await message.answer(
-        "Админ-панель. Выбери действие:",
-        reply_markup=admin_menu_kb()
-    )
+    await message.answer("Админ-меню:", reply_markup=admin_menu_kb())
