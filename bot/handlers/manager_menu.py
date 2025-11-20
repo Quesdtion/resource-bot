@@ -9,15 +9,12 @@ router = Router()
 
 
 def manager_menu_kb() -> ReplyKeyboardMarkup:
-    """
-    Клавиатура менеджера.
-    """
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="📦 Получить ресурсы")],
             [KeyboardButton(text="📋 Мои ресурсы")],
             [KeyboardButton(text="⏱ Отметить срок жизни")],
-            [KeyboardButton(text="⚙️ Статус ресурса")],  # <-- НОВАЯ КНОПКА
+            [KeyboardButton(text="⚙️ Статус ресурса")],
         ],
         resize_keyboard=True,
     )
@@ -25,9 +22,6 @@ def manager_menu_kb() -> ReplyKeyboardMarkup:
 
 @router.message(CommandStart())
 async def cmd_start(message: Message):
-    """
-    Стартовое сообщение для менеджера.
-    """
     await message.answer(
         "👋 Привет! Это бот выдачи ресурсов.\n"
         "Выбери действие на клавиатуре ниже:",
@@ -37,25 +31,16 @@ async def cmd_start(message: Message):
 
 @router.message(Command("menu"))
 async def cmd_menu(message: Message):
-    """
-    Команда /menu — повторно показать меню.
-    """
     await message.answer("Выбери действие:", reply_markup=manager_menu_kb())
 
 
 @router.message(Command("myid"))
 async def cmd_myid(message: Message):
-    """
-    Показать Telegram ID (для добавления в managers).
-    """
     await message.answer(f"Твой Telegram ID: <code>{message.from_user.id}</code>")
 
 
 @router.message(F.text == "📋 Мои ресурсы")
 async def my_resources(message: Message):
-    """
-    Мини-кабинет менеджера: показать все активные ресурсы (status = 'busy').
-    """
     pool = await get_pool()
     async with pool.acquire() as conn:
         rows = await conn.fetch(DBQueries.GET_ISSUED_RESOURCES, message.from_user.id)
