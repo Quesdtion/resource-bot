@@ -1,5 +1,5 @@
-from aiogram import Router
-from aiogram.filters import CommandStart, Command, F
+from aiogram import Router, F
+from aiogram.filters import CommandStart, Command
 from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton
 
 from db.database import get_pool
