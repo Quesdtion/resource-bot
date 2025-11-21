@@ -1,51 +1,44 @@
+# bot/main.py
 import asyncio
 import logging
+import os
 
 from aiogram import Bot, Dispatcher
+from aiogram.enums import ParseMode
 
-from bot.config import BOT_TOKEN
 from db.database import get_pool
-
-from bot.handlers import (
-    manager_menu,
-    resource_issue,
-    admin_menu,
-    reports,
-    admin_upload,
-    status_mark,
-)
-
 from bot.middlewares.role import RoleMiddleware
-from bot.utils.scheduler import setup_scheduler
+from bot.handlers import manager_menu, admin_menu, resource_issue, status_mark, reports
+
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 
 
 async def main():
-    logging.basicConfig(level=logging.INFO)
-
     if not BOT_TOKEN:
         raise RuntimeError("BOT_TOKEN не задан в переменных окружения")
 
-    bot = Bot(token=BOT_TOKEN, parse_mode="HTML")
+    logging.basicConfig(level=logging.INFO)
+    logging.getLogger(__name__).info("Bot starting...")
+
+    bot = Bot(token=BOT_TOKEN, parse_mode=ParseMode.HTML)
     dp = Dispatcher()
 
-    # Инициализируем пул БД
-    await get_pool()
+    # один общий пул + кладём его в bot.db для мидлварей и хендлеров
+    pool = await get_pool()
+    bot.db = pool
 
-    # Мидлварь ролей
+    # мидлварь ролей
     dp.message.middleware(RoleMiddleware())
+    dp.callback_query.middleware(RoleMiddleware())
 
-    # Подключаем роутеры
+    # роутеры
     dp.include_router(manager_menu.router)
-    dp.include_router(resource_issue.router)
     dp.include_router(admin_menu.router)
-    dp.include_router(reports.router)
-    dp.include_router(admin_upload.router)
+    dp.include_router(resource_issue.router)
     dp.include_router(status_mark.router)
+    dp.include_router(reports.router)
 
-    # Планировщик, если используешь
-    setup_scheduler(bot)
-
-    logging.info("Bot started")
+    logging.getLogger(__name__).info("Bot started")
     await dp.start_polling(bot)
 
 
