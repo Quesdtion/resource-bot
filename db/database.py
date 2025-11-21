@@ -1,23 +1,22 @@
+# db/database.py
 import os
 import asyncpg
 
-_pool = None
+_pool: asyncpg.Pool | None = None
 
 
-async def get_pool():
+async def get_pool() -> asyncpg.Pool:
     """
-    Возвращает единый пул соединений с БД.
-    Создаётся один раз, затем переиспользуется.
+    Возвращает общий пул соединений с БД.
+    При первом вызове создаёт пул, дальше переиспользует.
     """
     global _pool
     if _pool is None:
         _pool = await asyncpg.create_pool(
-            host=os.getenv("DB_HOST"),
-            port=os.getenv("DB_PORT"),
             user=os.getenv("DB_USER"),
             password=os.getenv("DB_PASS"),
             database=os.getenv("DB_NAME"),
-            min_size=1,
-            max_size=5,  # Можно уменьшить/увеличить при необходимости
+            host=os.getenv("DB_HOST"),
+            port=os.getenv("DB_PORT"),
         )
     return _pool
