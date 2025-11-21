@@ -1,3 +1,4 @@
+# bot/handlers/manager_menu.py
 from aiogram import Router, F
 from aiogram.filters import CommandStart, Command
 from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton
@@ -8,7 +9,7 @@ from bot.utils.queries import DBQueries
 router = Router()
 
 BACK_BUTTON_TEXT = "⬅️ Назад"
-ADMIN_MENU_BUTTON_TEXT = "🛠 Админ меню"
+ADMIN_MENU_BUTTON_TEXT = "⚒ Админ меню"
 
 
 def manager_menu_kb() -> ReplyKeyboardMarkup:
