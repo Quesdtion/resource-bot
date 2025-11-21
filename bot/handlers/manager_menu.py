@@ -8,9 +8,13 @@ from bot.utils.queries import DBQueries
 router = Router()
 
 BACK_BUTTON_TEXT = "⬅️ Назад"
+ADMIN_MENU_BUTTON_TEXT = "🛠 Админ меню"
 
 
 def manager_menu_kb() -> ReplyKeyboardMarkup:
+    """
+    Главное меню менеджера (и админа, если он работает как менеджер).
+    """
     return ReplyKeyboardMarkup(
         keyboard=[
             [
@@ -21,6 +25,9 @@ def manager_menu_kb() -> ReplyKeyboardMarkup:
                 KeyboardButton(text="⚙️ Статус ресурса"),
                 KeyboardButton(text="🔄 Обновить меню"),
             ],
+            [
+                KeyboardButton(text=ADMIN_MENU_BUTTON_TEXT),
+            ],
         ],
         resize_keyboard=True,
     )
@@ -29,7 +36,7 @@ def manager_menu_kb() -> ReplyKeyboardMarkup:
 @router.message(CommandStart())
 async def cmd_start(message: Message):
     await message.answer(
-        "👋 Привет! Это бот выдачи ресурсов.\n"
+        "👋 Привет! Это бот выдачи и учёта ресурсов.\n"
         "Выбери действие на клавиатуре ниже:",
         reply_markup=manager_menu_kb(),
     )
