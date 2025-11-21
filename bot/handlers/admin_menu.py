@@ -1,38 +1,66 @@
-from aiogram import Router
+from aiogram import Router, F
 from aiogram.filters import Command
 from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton
 
-from db.database import get_pool
-from bot.utils.queries import DBQueries
+from bot.handlers.manager_menu import manager_menu_kb, ADMIN_MENU_BUTTON_TEXT
 
 router = Router()
 
-BACK_BUTTON_TEXT = "⬅️ Назад"
+EXIT_ADMIN_BUTTON_TEXT = "⬅️ Выйти в обычное меню"
 
 
 def admin_menu_kb() -> ReplyKeyboardMarkup:
+    """
+    Главное меню админа.
+    """
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text="📊 Отчёт по ресурсам")],
-            [KeyboardButton(text="💰 Финансовый отчёт")],
-            [KeyboardButton(text="📦 Загрузить ресурсы")],
+            [
+                KeyboardButton(text="📦 Загрузить ресурсы"),
+                KeyboardButton(text="📊 Отчёты"),
+            ],
+            [
+                KeyboardButton(text=EXIT_ADMIN_BUTTON_TEXT),
+            ],
         ],
         resize_keyboard=True,
     )
 
 
-async def _is_admin(user_id: int) -> bool:
-    pool = await get_pool()
-    async with pool.acquire() as conn:
-        row = await conn.fetchrow(DBQueries.CHECK_MANAGER_ROLE, user_id)
+async def _open_admin_menu(message: Message, role: str | None):
+    """
+    Общая функция входа в админ-меню.
+    role передаёт мидлварь (admin / manager / None).
+    """
+    if role != "admin":
+        await message.answer("❌ У тебя нет доступа к админ-меню.")
+        return
 
-    return bool(row and row["role"] == "admin")
+    await message.answer(
+        "👑 Админ-меню.\nВыбери действие:",
+        reply_markup=admin_menu_kb(),
+    )
 
 
 @router.message(Command("admin"))
-async def cmd_admin(message: Message):
-    if not await _is_admin(message.from_user.id):
-        await message.answer("⛔ Нет доступа.")
-        return
+async def cmd_admin(message: Message, role: str | None = None):
+    await _open_admin_menu(message, role)
 
-    await message.answer("Админ-меню:", reply_markup=admin_menu_kb())
+
+@router.message(F.text == ADMIN_MENU_BUTTON_TEXT)
+async def btn_admin_menu(message: Message, role: str | None = None):
+    """
+    Обработка кнопки 🛠 Админ меню из обычного меню.
+    """
+    await _open_admin_menu(message, role)
+
+
+@router.message(F.text == EXIT_ADMIN_BUTTON_TEXT)
+async def exit_admin_menu(message: Message, role: str | None = None):
+    """
+    Кнопка выхода из админки обратно в обычное меню.
+    """
+    await message.answer(
+        "Возвращаю в обычное меню:",
+        reply_markup=manager_menu_kb(),
+    )
