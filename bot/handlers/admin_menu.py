@@ -1,3 +1,4 @@
+# bot/handlers/admin_menu.py
 from aiogram import Router, F
 from aiogram.filters import Command
 from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton
@@ -50,7 +51,7 @@ async def cmd_admin(message: Message, role: str | None = None):
 @router.message(F.text == ADMIN_MENU_BUTTON_TEXT)
 async def btn_admin_menu(message: Message, role: str | None = None):
     """
-    Обработка кнопки 🛠 Админ меню из обычного меню.
+    Обработка кнопки ⚒ Админ меню из обычного меню.
     """
     await _open_admin_menu(message, role)
 
