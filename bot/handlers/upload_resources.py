@@ -103,7 +103,7 @@ async def choose_type(message: Message, role: str | None = None, state: FSMConte
         "Поддерживаются форматы:\n"
         "• <code>email;password</code>\n"
         "• <code>login:password</code>\n"
-        "• <code>login<TAB>password</code>\n"
+        "• <code>login[TAB]password</code> (между ними символ табуляции)\n"
         "• <code>login password</code> (две части через пробел)\n"
         "• <code>email,password</code>\n"
         "• <code>Логин: xxx | Пароль: yyy ...</code>\n"
@@ -134,7 +134,7 @@ async def custom_type(message: Message, role: str | None = None, state: FSMConte
     await message.answer(
         f"✅ Тип выбран: <b>{resource_type}</b>\n\n"
         "Теперь пришли список логинов и паролей.\n"
-        "Поддерживаемые форматы смотри выше.\n"
+        "Форматы такие же, как и для стандартных типов.\n"
         "Каждая пара — с новой строки.",
         reply_markup=back_only_kb(),
     )
@@ -168,7 +168,7 @@ def parse_credentials_block(text: str) -> list[tuple[str, str]]:
                 pairs.append((login, password))
                 continue
 
-        # Отдельный кейс: "Логин: xxx | Пароль: yyy" (как раньше)
+        # Отдельный кейс: "Логин: xxx | Пароль: yyy"
         if "Логин:" in line and "Пароль:" in line:
             try:
                 part_login = line.split("Логин:", 1)[1]
@@ -221,7 +221,6 @@ def parse_credentials_block(text: str) -> list[tuple[str, str]]:
             login = left.strip()
             password = right.strip()
             if login and password and " " not in login:
-                # если в login уже пробелы — вероятно это был формат с лишним текстом
                 pairs.append((login, password))
                 continue
 
