@@ -1,271 +1,225 @@
 # bot/handlers/upload_resources.py
 
+from __future__ import annotations
+
 from aiogram import Router, F
-from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton
-from aiogram.fsm.state import StatesGroup, State
+from aiogram.types import (
+    Message,
+    ReplyKeyboardMarkup,
+    KeyboardButton,
+)
 from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import StatesGroup, State
 
 from db.database import get_pool
-from bot.utils.queries import DBQueries
-from bot.handlers.manager_menu import BACK_BUTTON_TEXT
-
-import re
+from bot.handlers.manager_menu import manager_menu_kb, BACK_BUTTON_TEXT
 
 router = Router()
 
-# Кнопки типов ресурсов (то, что видит админ)
-RESOURCE_TYPE_BUTTONS = [
-    "🐍 Mamba",
-    "💜 Beboo",
-    "🎯 Tabor",
-    "❓ Другое",
-]
 
-# Маппинг "текст кнопки" -> "type" в БД
-RESOURCE_TYPE_MAP = {
-    "🐍 Mamba": "mamba",
-    "💜 Beboo": "beboo",
-    "🎯 Tabor": "tabor",
-}
-
+# --------- СТЕЙТЫ --------- #
 
 class UploadStates(StatesGroup):
-    choosing_type = State()
-    typing_custom_type = State()
-    sending_data = State()
+    CHOOSE_TYPE = State()
+    ENTER_DATA = State()
 
 
-def upload_types_kb() -> ReplyKeyboardMarkup:
-    keyboard = [
-        [KeyboardButton(text=btn)] for btn in RESOURCE_TYPE_BUTTONS
-    ]
-    keyboard.append([KeyboardButton(text=BACK_BUTTON_TEXT)])
-    return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
+# --------- КНОПКИ / КЛАВИАТУРЫ --------- #
+
+# типы ресурсов, которые можно выбрать кнопкой.
+# при желании допиши сюда свои варианты.
+RESOURCE_TYPES = [
+    "mamba",
+    "beboo",
+    "badoo",
+    "loveplanet",
+]
 
 
-def back_only_kb() -> ReplyKeyboardMarkup:
+def types_keyboard() -> ReplyKeyboardMarkup:
+    """
+    Клавиатура выбора типа ресурса.
+    """
+    row_types = [KeyboardButton(text=t) for t in RESOURCE_TYPES]
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            row_types,
+            [KeyboardButton(text=BACK_BUTTON_TEXT)],
+        ],
+        resize_keyboard=True,
+    )
+
+
+def back_keyboard() -> ReplyKeyboardMarkup:
+    """
+    Клавиатура только с кнопкой 'Назад'.
+    """
     return ReplyKeyboardMarkup(
         keyboard=[[KeyboardButton(text=BACK_BUTTON_TEXT)]],
         resize_keyboard=True,
     )
 
 
-@router.message(F.text == "📦 Загрузить ресурсы")
-async def start_upload(message: Message, role: str | None = None, state: FSMContext = None):
+# --------- ПАРСЕР ТЕКСТА --------- #
+
+def _clean_piece(piece: str) -> str:
     """
-    Вход в загрузку ресурсов из админ-меню.
+    Убираем слова 'Логин:', 'Пароль:' и хвост типа 'Спасибо за покупку!❤️'.
     """
-    if role != "admin":
-        await message.answer("❌ У тебя нет доступа к загрузке ресурсов.")
-        return
+    piece = piece.strip()
 
-    await state.set_state(UploadStates.choosing_type)
-    await message.answer(
-        "🧩 Выбери тип ресурсов, которые хочешь загрузить:",
-        reply_markup=upload_types_kb(),
-    )
+    lowers = piece.lower()
+    for prefix in ("логин:", "login:", "email:", "почта:"):
+        if lowers.startswith(prefix):
+            piece = piece[len(prefix):].strip()
+            break
 
+    for prefix in ("пароль:", "password:", "pass:"):
+        if lowers.startswith(prefix):
+            piece = piece[len(prefix):].strip()
+            break
 
-@router.message(UploadStates.choosing_type)
-async def choose_type(message: Message, role: str | None = None, state: FSMContext = None):
-    text = message.text.strip()
+    # Отрезаем хвост после 'спасибо', если он есть
+    for marker in ("спасибо", "thank you", "❤️"):
+        idx = piece.lower().find(marker)
+        if idx != -1:
+            piece = piece[:idx].strip()
 
-    if text == BACK_BUTTON_TEXT:
-        # просто выходим из состояния, админ может заново открыть меню
-        await state.clear()
-        await message.answer("Отмена загрузки.")
-        return
-
-    if role != "admin":
-        await message.answer("❌ У тебя нет доступа.")
-        await state.clear()
-        return
-
-    if text == "❓ Другое":
-        await state.set_state(UploadStates.typing_custom_type)
-        await message.answer(
-            "✏️ Введи тип ресурса текстом, например: <code>mamba</code> / <code>beboo</code> / <code>tabor</code>.",
-            reply_markup=back_only_kb(),
-        )
-        return
-
-    if text not in RESOURCE_TYPE_MAP:
-        await message.answer("Выбери один из типов на клавиатуре или нажми Назад.")
-        return
-
-    resource_type = RESOURCE_TYPE_MAP[text]
-    await state.update_data(resource_type=resource_type)
-    await state.set_state(UploadStates.sending_data)
-
-    await message.answer(
-        f"✅ Тип выбран: <b>{resource_type}</b>\n\n"
-        "Теперь пришли список логинов и паролей.\n"
-        "Поддерживаются форматы:\n"
-        "• <code>email;password</code>\n"
-        "• <code>login:password</code>\n"
-        "• <code>login[TAB]password</code> (между ними символ табуляции)\n"
-        "• <code>login password</code> (две части через пробел)\n"
-        "• <code>email,password</code>\n"
-        "• <code>Логин: xxx | Пароль: yyy ...</code>\n"
-        "• <code>login: xxx password: yyy ...</code>\n\n"
-        "Каждая пара — с новой строки.",
-        reply_markup=back_only_kb(),
-    )
+    return piece
 
 
-@router.message(UploadStates.typing_custom_type)
-async def custom_type(message: Message, role: str | None = None, state: FSMContext = None):
-    text = message.text.strip()
-
-    if text == BACK_BUTTON_TEXT:
-        await state.set_state(UploadStates.choosing_type)
-        await message.answer("Снова выбери тип ресурса:", reply_markup=upload_types_kb())
-        return
-
-    if role != "admin":
-        await message.answer("❌ У тебя нет доступа.")
-        await state.clear()
-        return
-
-    resource_type = text
-    await state.update_data(resource_type=resource_type)
-    await state.set_state(UploadStates.sending_data)
-
-    await message.answer(
-        f"✅ Тип выбран: <b>{resource_type}</b>\n\n"
-        "Теперь пришли список логинов и паролей.\n"
-        "Форматы такие же, как и для стандартных типов.\n"
-        "Каждая пара — с новой строки.",
-        reply_markup=back_only_kb(),
-    )
-
-
-def parse_credentials_block(text: str) -> list[tuple[str, str]]:
+def parse_pairs(raw_text: str) -> list[tuple[str, str]]:
     """
-    Универсальный разбор пачки логин/пароль.
-    Возвращает список (login, password).
+    Универсальный парсер пачки ресурсов.
+    Поддерживаем:
+      - `login;password`
+      - `login,password`
+      - `login password`
+      - `login<TAB>password`
+      - строки вида: 'Логин: ... | Пароль: ... | Спасибо ...'
     """
     pairs: list[tuple[str, str]] = []
 
-    for raw_line in text.splitlines():
+    for raw_line in raw_text.splitlines():
         line = raw_line.strip()
         if not line:
             continue
 
-        # 1) Формат с явным "Логин" / "Пароль" (рус/англ) и лишним текстом
-        #   Примеры:
-        #   - Логин: xxx | Пароль: yyy | Спасибо за покупку
-        #   - login: xxx password: yyy ❤️
-        m = re.search(
-            r'(?i)(login|логин|user|email)\s*[:=]\s*([^|\s,]+).*?'
-            r'(password|пароль|pass)\s*[:=]\s*([^|\s,]+)',
-            line,
-        )
-        if m:
-            login = m.group(2).strip()
-            password = m.group(4).strip()
-            if login and password:
-                pairs.append((login, password))
-                continue
+        # 1) попытка распарсить формат с "Логин: ... | Пароль: ..."
+        if "логин:" in line.lower() and "пароль:" in line.lower():
+            parts = [p for p in line.split("|") if p.strip()]
+            if len(parts) >= 2:
+                login_part = _clean_piece(parts[0])
+                pass_part = _clean_piece(parts[1])
+                if login_part and pass_part:
+                    pairs.append((login_part, pass_part))
+                    continue
 
-        # Отдельный кейс: "Логин: xxx | Пароль: yyy"
-        if "Логин:" in line and "Пароль:" in line:
-            try:
-                part_login = line.split("Логин:", 1)[1]
-                if "|" in part_login:
-                    part_login, rest = part_login.split("|", 1)
-                    part_pwd = rest.split("Пароль:", 1)[1]
-                else:
-                    pieces = part_login.split("Пароль:", 1)
-                    part_login = pieces[0]
-                    part_pwd = pieces[1] if len(pieces) > 1 else ""
-                login = part_login.strip(" |:")
-                password = part_pwd.strip(" |:")
+        # 2) обычные разделители ; , таб, пробел
+        for sep in (";", ",", "\t", " "):
+            if sep in line:
+                left, right = line.split(sep, 1)
+                login = _clean_piece(left)
+                password = _clean_piece(right)
                 if login and password:
                     pairs.append((login, password))
-                    continue
-            except Exception:
-                pass  # если не вышло — пробуем другие варианты
-
-        # 2) Вариант: "login;password"
-        if ";" in line:
-            left, right = line.split(";", 1)
-            login = left.strip()
-            password = right.strip()
-            if login and password:
-                pairs.append((login, password))
-                continue
-
-        # 3) Вариант: "login<TAB>password"
-        if "\t" in line:
-            left, right = line.split("\t", 1)
-            login = left.strip()
-            password = right.strip()
-            if login and password:
-                pairs.append((login, password))
-                continue
-
-        # 4) Вариант: CSV "email,password"
-        if "," in line:
-            left, right = line.split(",", 1)
-            login = left.strip()
-            password = right.strip()
-            if login and password:
-                pairs.append((login, password))
-                continue
-
-        # 5) Вариант: "login:password"
-        # (но НЕ путать с "login: xxx password: yyy" — он выше уже обработан)
-        if ":" in line:
-            left, right = line.split(":", 1)
-            login = left.strip()
-            password = right.strip()
-            if login and password and " " not in login:
-                pairs.append((login, password))
-                continue
-
-        # 6) Вариант: "login password" — ровно две части через пробел
-        parts = line.split()
-        if len(parts) == 2:
-            login, password = parts[0].strip(), parts[1].strip()
-            if login and password:
-                pairs.append((login, password))
-                continue
-
-        # Если ничего не подошло — пропускаем строку
-        continue
+                break
+        else:
+            # если разделителей не нашли — пропускаем строку
+            continue
 
     return pairs
 
 
-@router.message(UploadStates.sending_data)
-async def receive_data(message: Message, role: str | None = None, state: FSMContext = None):
-    text = message.text
+# --------- ХЕНДЛЕРЫ ЗАГРУЗКИ --------- #
 
-    if text.strip() == BACK_BUTTON_TEXT:
-        await state.set_state(UploadStates.choosing_type)
-        await message.answer("Загрузка отменена. Снова выбери тип ресурса:", reply_markup=upload_types_kb())
+@router.message(F.text == "📦 Загрузить ресурсы")
+async def start_upload(message: Message, state: FSMContext, role: str | None = None):
+    """
+    Старт загрузки из админ-меню.
+    """
+    if role != "admin":
+        await message.answer("❌ У тебя нет прав для загрузки ресурсов.")
         return
 
-    if role != "admin":
-        await message.answer("❌ У тебя нет доступа.")
+    await state.set_state(UploadStates.CHOOSE_TYPE)
+    await message.answer(
+        "Выбери тип ресурса, который загружаешь:",
+        reply_markup=types_keyboard(),
+    )
+
+
+@router.message(UploadStates.CHOOSE_TYPE)
+async def choose_type(message: Message, state: FSMContext, role: str | None = None):
+    """
+    Выбор типа ресурса.
+    """
+    text = message.text.strip()
+
+    if text == BACK_BUTTON_TEXT:
+        # Назад из выбора типа — просто главное меню
         await state.clear()
+        await message.answer("Главное меню:", reply_markup=manager_menu_kb())
+        return
+
+    if text not in RESOURCE_TYPES:
+        await message.answer(
+            "⚠️ Такой тип ресурса не знаю.\n"
+            "Выбери из списка на клавиатуре.",
+            reply_markup=types_keyboard(),
+        )
+        return
+
+    # Сохраняем выбранный тип
+    await state.update_data(res_type=text)
+    await state.set_state(UploadStates.ENTER_DATA)
+
+    await message.answer(
+        "Отправь список логин:пароль, каждый с новой строки.\n\n"
+        "Поддерживаем форматы:\n"
+        "• <code>login;password</code>\n"
+        "• <code>login,password</code>\n"
+        "• <code>login password</code>\n"
+        "• <code>login<TAB>password</code>\n"
+        "• <code>Логин: ... | Пароль: ... | Спасибо за покупку!❤️</code>",
+        reply_markup=back_keyboard(),
+    )
+
+
+@router.message(UploadStates.ENTER_DATA)
+async def upload_data(message: Message, state: FSMContext, role: str | None = None):
+    """
+    Принимаем сырой текст, парсим и сохраняем ресурсы.
+    """
+    text = message.text
+
+    # Назад из ввода данных — вернуться к выбору типа
+    if text.strip() == BACK_BUTTON_TEXT:
+        await state.set_state(UploadStates.CHOOSE_TYPE)
+        await message.answer(
+            "Выбери тип ресурса:",
+            reply_markup=types_keyboard(),
+        )
         return
 
     data = await state.get_data()
-    resource_type = data.get("resource_type")
+    res_type: str = data.get("res_type") or data.get("type") or data.get("res_type".upper(), "")
 
-    if not resource_type:
-        await message.answer("Ошибка: не выбран тип ресурса. Попробуй начать заново.")
-        await state.clear()
+    if not res_type:
+        # На всякий случай: если потеряли стейт, возвращаем в начало загрузки
+        await state.set_state(UploadStates.CHOOSE_TYPE)
+        await message.answer(
+            "Не понял, какой тип ресурса загружаем. Выбери тип ещё раз:",
+            reply_markup=types_keyboard(),
+        )
         return
 
-    pairs = parse_credentials_block(text)
+    pairs = parse_pairs(text)
     if not pairs:
         await message.answer(
-            "Не удалось распознать ни одного логина/пароля.\n"
+            "❌ Не смог найти ни одной пары логин/пароль.\n"
             "Проверь формат и попробуй ещё раз.",
-            reply_markup=back_only_kb(),
+            reply_markup=back_keyboard(),
         )
         return
 
@@ -274,25 +228,62 @@ async def receive_data(message: Message, role: str | None = None, state: FSMCont
 
     async with pool.acquire() as conn:
         for login, password in pairs:
-            try:
-                await conn.execute(
-                    DBQueries.INSERT_RESOURCE_BULK,
-                    resource_type,
-                    login,
-                    password,
-                    None,     # proxy
-                    None,     # buy_price
-                )
-                inserted += 1
-            except Exception:
-                # Если конкретный логин не вставился — просто пропустим
+            # Проверяем, нет ли уже такого логина этого типа
+            exists = await conn.fetchrow(
+                "SELECT 1 FROM resources WHERE type=$1 AND login=$2",
+                res_type,
+                login,
+            )
+            if exists:
                 continue
+
+            await conn.execute(
+                """
+                INSERT INTO resources (type, login, password, status)
+                VALUES ($1, $2, $3, 'free')
+                """,
+                res_type,
+                login,
+                password,
+            )
+            inserted += 1
 
     await state.clear()
 
     await message.answer(
-        f"✅ Загрузка завершена.\n"
-        f"Распознано пар: <b>{len(pairs)}</b>\n"
-        f"Успешно добавлено в БД: <b>{inserted}</b>\n\n"
-        f"Тип: <b>{resource_type}</b>",
+        "✅ Загрузка завершена.\n"
+        f"Распознано пар: {len(pairs)}\n"
+        f"Успешно добавлено в БД: {inserted}\n"
+        f"Тип: <b>{res_type}</b>",
+        reply_markup=manager_menu_kb(),
     )
+
+
+# --------- УНИВЕРСАЛЬНЫЙ «НАЗАД» --------- #
+
+@router.message(F.text == BACK_BUTTON_TEXT)
+async def global_back_from_upload(
+    message: Message,
+    state: FSMContext,
+    role: str | None = None,
+):
+    """
+    Если по каким-то причинам пользователь нажал 'Назад' уже после
+    завершения сценария загрузки (или стейт потерян) — просто
+    отправляем его в нужное меню.
+    """
+    await state.clear()
+
+    if role == "admin":
+        # Импортируем тут, чтобы избежать циклического импорта
+        from bot.handlers.admin_menu import admin_menu_kb
+
+        await message.answer(
+            "👑 Админ-меню:",
+            reply_markup=admin_menu_kb(),
+        )
+    else:
+        await message.answer(
+            "Главное меню:",
+            reply_markup=manager_menu_kb(),
+        )
