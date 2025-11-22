@@ -8,24 +8,31 @@ from aiogram.enums import ParseMode
 
 from db.database import get_pool
 from bot.middlewares.role import RoleMiddleware
-from bot.handlers import manager_menu, admin_menu, resource_issue, status_mark, reports
+from bot.handlers import (
+    manager_menu,
+    admin_menu,
+    resource_issue,
+    status_mark,
+    reports,
+    upload_resources,   # 🔹 наш новый модуль
+)
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 
 async def main():
+    logger.info("Bot starting...")
+
+    BOT_TOKEN = os.getenv("BOT_TOKEN")
     if not BOT_TOKEN:
         raise RuntimeError("BOT_TOKEN не задан в переменных окружения")
-
-    logging.basicConfig(level=logging.INFO)
-    logging.getLogger(__name__).info("Bot starting...")
 
     bot = Bot(token=BOT_TOKEN, parse_mode=ParseMode.HTML)
     dp = Dispatcher()
 
-    # один общий пул + кладём его в bot.db для мидлварей и хендлеров
-    pool = await get_pool()
-    bot.db = pool
+    # общий пул БД
+    bot.db = await get_pool()
 
     # мидлварь ролей
     dp.message.middleware(RoleMiddleware())
@@ -37,10 +44,14 @@ async def main():
     dp.include_router(resource_issue.router)
     dp.include_router(status_mark.router)
     dp.include_router(reports.router)
+    dp.include_router(upload_resources.router)  # 🔹 подключаем загрузку
 
-    logging.getLogger(__name__).info("Bot started")
+    logger.info("Bot started")
     await dp.start_polling(bot)
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except (KeyboardInterrupt, SystemExit):
+        logger.info("Bot stopped")
