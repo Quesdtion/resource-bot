@@ -1,3 +1,5 @@
+# bot/handlers/upload_resources.py
+
 from aiogram import Router, F
 from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton
 from aiogram.fsm.state import StatesGroup, State
@@ -6,6 +8,8 @@ from aiogram.fsm.context import FSMContext
 from db.database import get_pool
 from bot.utils.queries import DBQueries
 from bot.handlers.manager_menu import BACK_BUTTON_TEXT
+
+import re
 
 router = Router()
 
@@ -99,7 +103,11 @@ async def choose_type(message: Message, role: str | None = None, state: FSMConte
         "Поддерживаются форматы:\n"
         "• <code>email;password</code>\n"
         "• <code>login:password</code>\n"
-        "• <code>Логин: ... | Пароль: ...</code>\n\n"
+        "• <code>login<TAB>password</code>\n"
+        "• <code>login password</code> (две части через пробел)\n"
+        "• <code>email,password</code>\n"
+        "• <code>Логин: xxx | Пароль: yyy ...</code>\n"
+        "• <code>login: xxx password: yyy ...</code>\n\n"
         "Каждая пара — с новой строки.",
         reply_markup=back_only_kb(),
     )
@@ -126,10 +134,7 @@ async def custom_type(message: Message, role: str | None = None, state: FSMConte
     await message.answer(
         f"✅ Тип выбран: <b>{resource_type}</b>\n\n"
         "Теперь пришли список логинов и паролей.\n"
-        "Форматы:\n"
-        "• <code>email;password</code>\n"
-        "• <code>login:password</code>\n"
-        "• <code>Логин: ... | Пароль: ...</code>\n\n"
+        "Поддерживаемые форматы смотри выше.\n"
         "Каждая пара — с новой строки.",
         reply_markup=back_only_kb(),
     )
@@ -147,7 +152,23 @@ def parse_credentials_block(text: str) -> list[tuple[str, str]]:
         if not line:
             continue
 
-        # Вариант: "Логин: xxx | Пароль: yyy"
+        # 1) Формат с явным "Логин" / "Пароль" (рус/англ) и лишним текстом
+        #   Примеры:
+        #   - Логин: xxx | Пароль: yyy | Спасибо за покупку
+        #   - login: xxx password: yyy ❤️
+        m = re.search(
+            r'(?i)(login|логин|user|email)\s*[:=]\s*([^|\s,]+).*?'
+            r'(password|пароль|pass)\s*[:=]\s*([^|\s,]+)',
+            line,
+        )
+        if m:
+            login = m.group(2).strip()
+            password = m.group(4).strip()
+            if login and password:
+                pairs.append((login, password))
+                continue
+
+        # Отдельный кейс: "Логин: xxx | Пароль: yyy" (как раньше)
         if "Логин:" in line and "Пароль:" in line:
             try:
                 part_login = line.split("Логин:", 1)[1]
@@ -155,7 +176,6 @@ def parse_credentials_block(text: str) -> list[tuple[str, str]]:
                     part_login, rest = part_login.split("|", 1)
                     part_pwd = rest.split("Пароль:", 1)[1]
                 else:
-                    # Логин: xxx Пароль: yyy
                     pieces = part_login.split("Пароль:", 1)
                     part_login = pieces[0]
                     part_pwd = pieces[1] if len(pieces) > 1 else ""
@@ -165,9 +185,9 @@ def parse_credentials_block(text: str) -> list[tuple[str, str]]:
                     pairs.append((login, password))
                     continue
             except Exception:
-                pass  # пробуем другие варианты
+                pass  # если не вышло — пробуем другие варианты
 
-        # Вариант: "login;password"
+        # 2) Вариант: "login;password"
         if ";" in line:
             left, right = line.split(";", 1)
             login = left.strip()
@@ -176,7 +196,7 @@ def parse_credentials_block(text: str) -> list[tuple[str, str]]:
                 pairs.append((login, password))
                 continue
 
-        # Вариант: "login\tpassword"
+        # 3) Вариант: "login<TAB>password"
         if "\t" in line:
             left, right = line.split("\t", 1)
             login = left.strip()
@@ -185,11 +205,30 @@ def parse_credentials_block(text: str) -> list[tuple[str, str]]:
                 pairs.append((login, password))
                 continue
 
-        # Вариант: "login:password"
+        # 4) Вариант: CSV "email,password"
+        if "," in line:
+            left, right = line.split(",", 1)
+            login = left.strip()
+            password = right.strip()
+            if login and password:
+                pairs.append((login, password))
+                continue
+
+        # 5) Вариант: "login:password"
+        # (но НЕ путать с "login: xxx password: yyy" — он выше уже обработан)
         if ":" in line:
             left, right = line.split(":", 1)
             login = left.strip()
             password = right.strip()
+            if login and password and " " not in login:
+                # если в login уже пробелы — вероятно это был формат с лишним текстом
+                pairs.append((login, password))
+                continue
+
+        # 6) Вариант: "login password" — ровно две части через пробел
+        parts = line.split()
+        if len(parts) == 2:
+            login, password = parts[0].strip(), parts[1].strip()
             if login and password:
                 pairs.append((login, password))
                 continue
