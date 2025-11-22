@@ -1,79 +1,24 @@
-# bot/handlers/manager_menu.py
-from aiogram import Router, F
-from aiogram.filters import CommandStart, Command
-from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton
+# handlers/manager_menu.py
 
-from db.database import get_pool
-from bot.utils.queries import DBQueries
+from aiogram import Router, types
+from utils.splitter import split_message_lines
+from keyboards.back import back_only_kb
 
 router = Router()
 
-BACK_BUTTON_TEXT = "⬅️ Назад"
-ADMIN_MENU_BUTTON_TEXT = "⚒ Админ меню"
 
+@router.message(commands=["my_resources"])
+async def my_resources(message: types.Message):
+    # Генерация списка ресурсов (пример)
+    lines = [
+        f"Ресурс {i}: состояние — OK"
+        for i in range(1, 250)   # Пример большого списка
+    ]
 
-def manager_menu_kb() -> ReplyKeyboardMarkup:
-    """
-    Главное меню менеджера (и админа, если он работает как менеджер).
-    """
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [
-                KeyboardButton(text="📦 Получить ресурсы"),
-                KeyboardButton(text="📋 Мои ресурсы"),
-            ],
-            [
-                KeyboardButton(text="⚙️ Статус ресурса"),
-                KeyboardButton(text="🔄 Обновить меню"),
-            ],
-            [
-                KeyboardButton(text=ADMIN_MENU_BUTTON_TEXT),
-            ],
-        ],
-        resize_keyboard=True,
-    )
+    parts = list(split_message_lines(lines))
 
+    for part in parts[:-1]:
+        await message.answer(part)
 
-@router.message(CommandStart())
-async def cmd_start(message: Message):
-    await message.answer(
-        "👋 Привет! Это бот выдачи и учёта ресурсов.\n"
-        "Выбери действие на клавиатуре ниже:",
-        reply_markup=manager_menu_kb(),
-    )
-
-
-@router.message(Command("menu"))
-@router.message(F.text == "🔄 Обновить меню")
-async def cmd_menu(message: Message):
-    await message.answer("Главное меню:", reply_markup=manager_menu_kb())
-
-
-@router.message(Command("myid"))
-async def cmd_myid(message: Message):
-    await message.answer(f"Твой Telegram ID: <code>{message.from_user.id}</code>")
-
-
-@router.message(F.text == "📋 Мои ресурсы")
-async def my_resources(message: Message):
-    pool = await get_pool()
-    async with pool.acquire() as conn:
-        rows = await conn.fetch(DBQueries.GET_ISSUED_RESOURCES, message.from_user.id)
-
-    if not rows:
-        await message.answer("У тебя сейчас нет активных ресурсов.")
-        return
-
-    lines = ["📋 Твои активные ресурсы:\n"]
-    for r in rows:
-        login = r["login"]
-        password = r["password"]
-        proxy = r["proxy"]
-        r_type = r["type"]
-
-        line = f"• <b>{r_type}</b> — <code>{login}</code> | <code>{password}</code>"
-        if proxy:
-            line += f" | proxy: <code>{proxy}</code>"
-        lines.append(line)
-
-    await message.answer("\n".join(lines))
+    # Последнее сообщение + кнопка
+    await message.answer(parts[-1], reply_markup=back_only_kb())
