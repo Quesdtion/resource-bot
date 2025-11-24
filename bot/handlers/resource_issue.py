@@ -1,3 +1,5 @@
+# bot/handlers/resource_issue.py
+
 from aiogram import Router, F
 from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton
 from aiogram.fsm.context import FSMContext
@@ -8,21 +10,22 @@ from bot.handlers.manager_menu import manager_menu_kb
 
 router = Router()
 
-BACK_BUTTON_TEXT = "⬅️ Назад"
+# ---------------------------------------------------
+# Константы и клавиатуры
+# ---------------------------------------------------
 
-# Типы ресурсов – ДОБАВЛЕН rambler
+BACK_BUTTON = "⬅️ Назад"
+
 RESOURCE_TYPES = ["mamba", "tabor", "beboo", "rambler"]
 
 
-def resource_type_kb() -> ReplyKeyboardMarkup:
+def issue_types_kb() -> ReplyKeyboardMarkup:
     """
-    Клавиатура выбора типа ресурса.
+    Клавиатура выбора типа ресурса при выдаче.
     """
+    row = [KeyboardButton(text=t) for t in RESOURCE_TYPES]
     return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text=t) for t in RESOURCE_TYPES],
-            [KeyboardButton(text=BACK_BUTTON_TEXT)],
-        ],
+        keyboard=[row, [KeyboardButton(text=BACK_BUTTON)]],
         resize_keyboard=True,
     )
 
@@ -31,108 +34,117 @@ def count_kb() -> ReplyKeyboardMarkup:
     """
     Клавиатура выбора количества (1–10) + Назад.
     """
-    rows = []
-    numbers = [str(i) for i in range(1, 11)]
+    keyboard = []
+    nums = [str(i) for i in range(1, 11)]
+    # 5 кнопок в строке
     for i in range(0, 10, 5):
-        rows.append([KeyboardButton(text=n) for n in numbers[i : i + 5]])
-    rows.append([KeyboardButton(text=BACK_BUTTON_TEXT)])
-    return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True)
+        keyboard.append([KeyboardButton(text=n) for n in nums[i : i + 5]])
+    keyboard.append([KeyboardButton(text=BACK_BUTTON)])
+    return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
 
+
+# ---------------------------------------------------
+# FSM
+# ---------------------------------------------------
 
 class IssueStates(StatesGroup):
-    waiting_type = State()
-    waiting_count = State()
+    choosing_type = State()
+    choosing_count = State()
 
+
+# ---------------------------------------------------
+# Старт выдачи
+# ---------------------------------------------------
 
 @router.message(F.text == "📦 Получить ресурсы")
-async def start_issue(message: Message, state: FSMContext):
-    """
-    Первое действие – выбор типа ресурса.
-    """
-    await state.clear()
-    await state.set_state(IssueStates.waiting_type)
+async def issue_start(message: Message, state: FSMContext):
+    await state.set_state(IssueStates.choosing_type)
     await message.answer(
         "Выбери тип ресурса, который тебе нужен:",
-        reply_markup=resource_type_kb(),
+        reply_markup=issue_types_kb(),
     )
 
 
-@router.message(IssueStates.waiting_type)
+# ---------------------------------------------------
+# Обработка «Назад»
+# ---------------------------------------------------
+
+@router.message(IssueStates.choosing_type, F.text == BACK_BUTTON)
+async def back_from_type(message: Message, state: FSMContext):
+    # Из выбора типа — сразу в главное меню
+    await state.clear()
+    await message.answer("Главное меню:", reply_markup=manager_menu_kb())
+
+
+@router.message(IssueStates.choosing_count, F.text == BACK_BUTTON)
+async def back_from_count(message: Message, state: FSMContext):
+    # Из выбора количества — назад к выбору типа
+    await state.set_state(IssueStates.choosing_type)
+    await message.answer("Снова выбери тип ресурса:", reply_markup=issue_types_kb())
+
+
+# ---------------------------------------------------
+# Выбор типа
+# ---------------------------------------------------
+
+@router.message(IssueStates.choosing_type)
 async def choose_type(message: Message, state: FSMContext):
-    """
-    Обработка выбранного типа ресурса.
-    """
-    text = message.text.strip().lower()
+    r_type = (message.text or "").strip().lower()
 
-    if text == BACK_BUTTON_TEXT.lower():
-        await state.clear()
-        await message.answer("Главное меню:", reply_markup=manager_menu_kb())
-        return
-
-    if text not in RESOURCE_TYPES:
+    if r_type not in RESOURCE_TYPES:
         await message.answer(
-            "Выбери тип ресурса, пожалуйста, с помощью кнопки ниже.",
-            reply_markup=resource_type_kb(),
+            "Выбери тип ресурса кнопкой снизу 👇",
+            reply_markup=issue_types_kb(),
         )
         return
 
-    await state.update_data(type=text)
-    await state.set_state(IssueStates.waiting_count)
-
+    await state.update_data(type=r_type)
+    await state.set_state(IssueStates.choosing_count)
     await message.answer(
         "Сколько ресурсов тебе нужно (от 1 до 10)?",
         reply_markup=count_kb(),
     )
 
 
-@router.message(IssueStates.waiting_count)
+# ---------------------------------------------------
+# Выбор количества и выдача
+# ---------------------------------------------------
+
+@router.message(IssueStates.choosing_count)
 async def choose_count(message: Message, state: FSMContext):
-    """
-    Обработка количества и фактическая выдача ресурсов.
-    """
-    text = message.text.strip()
+    text = (message.text or "").strip()
 
-    if text == BACK_BUTTON_TEXT:
-        await state.set_state(IssueStates.waiting_type)
-        await message.answer(
-            "Окей, выбери тип ресурса ещё раз:",
-            reply_markup=resource_type_kb(),
-        )
-        return
-
+    # Защита от мусора
     if not text.isdigit():
-        await message.answer(
-            "Введи число от 1 до 10 или нажми кнопку.",
-            reply_markup=count_kb(),
-        )
+        await message.answer("Нажми число на клавиатуре от 1 до 10 🙂")
         return
 
     count = int(text)
     if not 1 <= count <= 10:
-        await message.answer(
-            "Можно получить от 1 до 10 ресурсов за раз.",
-            reply_markup=count_kb(),
-        )
+        await message.answer("Нужно число от 1 до 10.")
         return
 
     data = await state.get_data()
     r_type = data.get("type")
 
-    if r_type not in RESOURCE_TYPES:
-        await state.clear()
-        await message.answer(
-            "Что-то пошло не так с типом ресурса. Начни заново.",
-            reply_markup=manager_menu_kb(),
-        )
-        return
-
     pool = await get_pool()
     async with pool.acquire() as conn:
+        # Берём свободные ресурсы нужного типа
         rows = await conn.fetch(
             """
-            SELECT id, login, password, proxy, buy_price
+            SELECT id,
+                   type,
+                   login,
+                   password,
+                   proxy,
+                   supplier_id,
+                   buy_price,
+                   receipt_state,
+                   lifetime_minutes
             FROM resources
-            WHERE type = $1 AND status = 'free'
+            WHERE type = $1
+              AND manager_tg_id IS NULL
+              AND status = 'free'
             ORDER BY id
             LIMIT $2
             """,
@@ -141,30 +153,29 @@ async def choose_count(message: Message, state: FSMContext):
         )
 
         if not rows:
-            await state.clear()
             await message.answer(
                 f"Свободных ресурсов типа {r_type} сейчас нет. "
                 f"Попроси администратора загрузить новые.",
                 reply_markup=manager_menu_kb(),
             )
+            await state.clear()
             return
 
-        issued_ids = [row["id"] for row in rows]
+        resource_ids = [row["id"] for row in rows]
 
-        for res_id in issued_ids:
-            await conn.execute(
-                """
-                UPDATE resources
-                SET status = 'busy',
-                    manager_tg_id = $1,
-                    issue_datetime = NOW(),
-                    receipt_state = 'new'
-                WHERE id = $2
-                """,
-                message.from_user.id,
-                res_id,
-            )
+        # ⚠️ ВАЖНО: статус больше НЕ меняем, только привязываем менеджера.
+        await conn.execute(
+            """
+            UPDATE resources
+            SET manager_tg_id = $1,
+                issue_datetime = NOW()
+            WHERE id = ANY($2::int[])
+            """,
+            message.from_user.id,
+            resource_ids,
+        )
 
+        # Логируем в history
         for row in rows:
             await conn.execute(
                 """
@@ -181,29 +192,28 @@ async def choose_count(message: Message, state: FSMContext):
                 )
                 VALUES (
                     NOW(),
-                    $1,
-                    $2,
-                    $3,
-                    NULL,
-                    $4,
+                    $1, $2, $3, $4, $5,
                     'issue',
-                    'new',
-                    NULL
+                    $6, $7
                 )
                 """,
                 row["id"],
                 message.from_user.id,
-                r_type,
+                row["type"],
+                row["supplier_id"],
                 row["buy_price"],
+                row["receipt_state"],
+                row["lifetime_minutes"],
             )
 
-    lines = ["Готово.\nТвои ресурсы:\n"]
+    # Формируем сообщение менеджеру
+    lines = ["Готово. Выдал ресурсы:\n"]
     for row in rows:
         login = row["login"]
         password = row["password"]
         proxy = row["proxy"]
 
-        line = f"• <code>{login}</code> | <code>{password}</code>"
+        line = f"• <b>{r_type}</b> — <code>{login}</code> | <code>{password}</code>"
         if proxy:
             line += f" | proxy: <code>{proxy}</code>"
         lines.append(line)
