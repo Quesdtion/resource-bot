@@ -7,6 +7,8 @@ from aiogram.fsm.state import StatesGroup, State
 from db.database import get_pool
 from bot.handlers.manager_menu import manager_menu_kb
 
+import re
+
 router = Router()
 
 # ------------------------------
@@ -15,6 +17,7 @@ router = Router()
 
 BACK_BUTTON = "⬅️ Назад"
 
+# Типы ресурсов, которые ты используешь
 RESOURCE_TYPES = ["mamba", "tabor", "beboo"]
 
 
@@ -28,10 +31,9 @@ def resource_types_kb() -> ReplyKeyboardMarkup:
     )
 
 
-def back_only_kb():
+def back_only_kb() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
-        keyboard=[[KeyboardButton(text=BACK_BUTTON)],
-        ],
+        keyboard=[[KeyboardButton(text=BACK_BUTTON)]],
         resize_keyboard=True,
     )
 
@@ -81,7 +83,9 @@ async def choose_type(message: Message, state: FSMContext):
         "Поддерживаемые форматы:\n"
         "• email password\n"
         "• email,password\n"
-        "• email\tpassword\n"
+        "• email;password\n"
+        "• email:password\n"
+        "• phone:password\n"
         "• строки с лишним текстом — найдём автоматически",
         reply_markup=back_only_kb()
     )
@@ -91,33 +95,64 @@ async def choose_type(message: Message, state: FSMContext):
 # Парсер строки
 # ------------------------------
 
+# примитивные шаблоны для логина
+EMAIL_RE = re.compile(r'[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}')
+PHONE_RE = re.compile(r'\b\d{7,15}\b')
+
+
 def parse_line(line: str):
     """
     Возвращает (login, password) или None
+
     Поддерживает:
-    - tab
-    - пробелы
-    - запятую
-    - любые символы вокруг
+    - логин:пароль  (в т.ч. телефон:пароль)
+    - логин;пароль
+    - логин,пароль
+    - логин\tпароль
+    - логин пароль
+    - строки с лишним текстом: ищем email/телефон и первое "слово" после него
     """
+    if not line:
+        return None
+
     line = line.strip()
+    if not line:
+        return None
 
-    # Если таб
-    if "\t" in line:
-        parts = line.split("\t")
-        if len(parts) >= 2:
-            return parts[0].strip(), parts[1].strip()
+    # 1) Прямые разделители логин/пароль
+    # порядок важен: сначала двоеточие и точка с запятой, потом таб/запятая/пробел
+    for delim in (":", ";", ",", "\t"):
+        if delim in line:
+            left, right = line.split(delim, 1)
+            left = left.strip()
+            right = right.strip()
+            if left and right:
+                return left, right
 
-    # Если запятая
-    if "," in line:
-        parts = line.split(",")
-        if len(parts) >= 2:
-            return parts[0].strip(), parts[1].strip()
-
-    # Если пробел
+    # 2) Если просто разделено пробелом(ами)
     parts = line.split()
     if len(parts) >= 2:
         return parts[0].strip(), parts[1].strip()
+
+    # 3) Строки с лишним текстом.
+    #    Ищем email или телефон, а потом первое "слово" после него — пароль.
+    m_email = EMAIL_RE.search(line)
+    if m_email:
+        login = m_email.group(0)
+        tail = line[m_email.end():]
+        m_pass = re.search(r'([^\s|:;,\t]+)', tail)
+        if m_pass:
+            password = m_pass.group(1)
+            return login, password
+
+    m_phone = PHONE_RE.search(line)
+    if m_phone:
+        login = m_phone.group(0)
+        tail = line[m_phone.end():]
+        m_pass = re.search(r'([^\s|:;,\t]+)', tail)
+        if m_pass:
+            password = m_pass.group(1)
+            return login, password
 
     return None
 
@@ -128,6 +163,7 @@ def parse_line(line: str):
 
 @router.message(UploadStates.waiting_text)
 async def process_upload_text(message: Message, state: FSMContext):
+    # обработка кнопки "Назад" внутри состояния
     if message.text == BACK_BUTTON:
         return await back_to_menu(message, state)
 
@@ -135,7 +171,7 @@ async def process_upload_text(message: Message, state: FSMContext):
     r_type = data.get("type")
 
     lines = message.text.split("\n")
-    parsed = []
+    parsed: list[tuple[str, str]] = []
 
     for ln in lines:
         res = parse_line(ln)
@@ -147,7 +183,10 @@ async def process_upload_text(message: Message, state: FSMContext):
     added = 0
 
     if total == 0:
-        await message.answer("❗ Не найдено ни одной пары логин/пароль.", reply_markup=manager_menu_kb())
+        await message.answer(
+            "❗ Не найдено ни одной пары логин/пароль.",
+            reply_markup=manager_menu_kb()
+        )
         await state.clear()
         return
 
@@ -166,9 +205,9 @@ async def process_upload_text(message: Message, state: FSMContext):
                 )
                 added += 1
             except Exception:
+                # дубликаты и прочие ошибки просто пропускаем
                 pass
 
-    # Формируем короткое сообщение, чтобы Telegram не ругался
     text = (
         f"✅ Загрузка завершена.\n"
         f"Распознано пар: {total}\n"
