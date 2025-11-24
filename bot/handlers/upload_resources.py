@@ -15,7 +15,6 @@ router = Router()
 
 BACK_BUTTON = "⬅️ Назад"
 
-# ТИПЫ РЕСУРСОВ, ДОБАВЛЕН rambler
 RESOURCE_TYPES = ["mamba", "tabor", "beboo", "rambler"]
 
 
@@ -31,9 +30,7 @@ def resource_types_kb() -> ReplyKeyboardMarkup:
 
 def back_only_kb():
     return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text=BACK_BUTTON)],
-        ],
+        keyboard=[[KeyboardButton(text=BACK_BUTTON)]],
         resize_keyboard=True,
     )
 
@@ -83,9 +80,10 @@ async def choose_type(message: Message, state: FSMContext):
         "Поддерживаемые форматы:\n"
         "• email password\n"
         "• email,password\n"
+        "• email:password\n"
         "• email\tpassword\n"
         "• строки с лишним текстом — найдём автоматически",
-        reply_markup=back_only_kb(),
+        reply_markup=back_only_kb()
     )
 
 
@@ -95,28 +93,35 @@ async def choose_type(message: Message, state: FSMContext):
 
 def parse_line(line: str):
     """
-    Возвращает (login, password) или None
-    Поддерживает:
-    - tab
-    - пробелы
-    - запятую
-    - любые символы вокруг
+    Возвращает (login, password)
+    Поддерживаемые типы разделителей:
+    - :
+    - таб
+    - пробел
+    - запятая
+    - любые строки с мусором
     """
     line = line.strip()
 
-    # Если таб
+    # 1) login:password
+    if ":" in line:
+        parts = line.split(":")
+        if len(parts) >= 2:
+            return parts[0].strip(), parts[1].strip()
+
+    # 2) TAB
     if "\t" in line:
         parts = line.split("\t")
         if len(parts) >= 2:
             return parts[0].strip(), parts[1].strip()
 
-    # Если запятая
+    # 3) email,password
     if "," in line:
         parts = line.split(",")
         if len(parts) >= 2:
             return parts[0].strip(), parts[1].strip()
 
-    # Если пробел
+    # 4) email password
     parts = line.split()
     if len(parts) >= 2:
         return parts[0].strip(), parts[1].strip()
@@ -149,10 +154,7 @@ async def process_upload_text(message: Message, state: FSMContext):
     added = 0
 
     if total == 0:
-        await message.answer(
-            "❗ Не найдено ни одной пары логин/пароль.",
-            reply_markup=manager_menu_kb(),
-        )
+        await message.answer("❗ Не найдено ни одной пары логин/пароль.", reply_markup=manager_menu_kb())
         await state.clear()
         return
 
@@ -171,7 +173,6 @@ async def process_upload_text(message: Message, state: FSMContext):
                 )
                 added += 1
             except Exception:
-                # пропускаем дубли и любые ошибки на отдельной строке
                 pass
 
     text = (
