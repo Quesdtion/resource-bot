@@ -1,8 +1,5 @@
-# bot/handlers/upload_resources.py
-
 from aiogram import Router, F
 from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton
-from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
 
@@ -10,26 +7,37 @@ from db.database import get_pool
 from bot.handlers.manager_menu import manager_menu_kb
 from bot.utils.admin_stats import send_free_resources_stats
 
-router = Router()
+import re
 
-# ------------------------------
-# Кнопки
-# ------------------------------
+router = Router()
 
 BACK_BUTTON = "⬅️ Назад"
 
-# Все типы ресурсов
-RESOURCE_TYPES = ["mamba", "tabor", "beboo", "rambler"]
+# Список типов, которые можно загружать
+RESOURCE_TYPES = [
+    "mamba",
+    "tabor",
+    "beboo",
+    "rambler",
+    "mamba [dolphin]",
+]
 
 
 def resource_types_kb() -> ReplyKeyboardMarkup:
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text=t) for t in RESOURCE_TYPES],
-            [KeyboardButton(text=BACK_BUTTON)],
-        ],
-        resize_keyboard=True,
-    )
+    rows: list[list[KeyboardButton]] = []
+    row: list[KeyboardButton] = []
+
+    for idx, t in enumerate(RESOURCE_TYPES, start=1):
+        row.append(KeyboardButton(text=t))
+        if idx % 3 == 0:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+
+    rows.append([KeyboardButton(text=BACK_BUTTON)])
+
+    return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True)
 
 
 def back_only_kb() -> ReplyKeyboardMarkup:
@@ -39,48 +47,34 @@ def back_only_kb() -> ReplyKeyboardMarkup:
     )
 
 
-# ------------------------------
-# FSM
-# ------------------------------
-
-
 class UploadStates(StatesGroup):
     waiting_type = State()
     waiting_text = State()
 
 
-# ------------------------------
-# Команда загрузки
-# ------------------------------
-
+# ==========================
+# Старт загрузки
+# ==========================
 
 @router.message(F.text == "📦 Загрузить ресурсы")
-async def upload_start(message: Message, state: FSMContext, role: str | None = None):
-    """
-    Вход в загрузку ресурсов из админ-меню.
-    """
+async def upload_start(message: Message, state: FSMContext):
     await state.set_state(UploadStates.waiting_type)
     await message.answer("Выбери тип ресурса:", reply_markup=resource_types_kb())
 
 
 @router.message(F.text == BACK_BUTTON)
 async def back_to_menu(message: Message, state: FSMContext):
-    """
-    Глобальная кнопка Назад для сценария загрузки:
-    очищаем стейт и возвращаем в обычное меню.
-    """
     await state.clear()
     await message.answer("Главное меню", reply_markup=manager_menu_kb())
 
 
-# ------------------------------
+# ==========================
 # Выбор типа ресурса
-# ------------------------------
-
+# ==========================
 
 @router.message(UploadStates.waiting_type)
 async def choose_type(message: Message, state: FSMContext):
-    r_type = (message.text or "").strip().lower()
+    r_type = (message.text or "").strip()
 
     if r_type not in RESOURCE_TYPES:
         await message.answer("Выбери тип кнопкой.", reply_markup=resource_types_kb())
@@ -91,115 +85,111 @@ async def choose_type(message: Message, state: FSMContext):
 
     await message.answer(
         "Отправь список ресурсов.\n"
-        "Поддерживаемые форматы, например:\n"
+        "Поддерживаемые форматы:\n"
         "• email password\n"
         "• email,password\n"
         "• email;password\n"
         "• email:password\n"
-        "• phone:password\n"
-        "• Логин: email | Пароль: pass | любой текст\n"
-        "• строки с лишним текстом — найдём автоматически",
+        "• email<TAB>password\n"
+        "• строки вида «Логин: xxx | Пароль: yyy | …»\n"
+        "• строки с лишним текстом — найдём автоматически\n\n"
+        "Для типа <b>mamba [dolphin]</b> достаточно списка имён профилей "
+        "в формате:\n"
+        "  - dam8134\n"
+        "  - tab2601\n"
+        "  - fad4756\n",
         reply_markup=back_only_kb(),
     )
 
 
-# ------------------------------
-# Парсер строки
-# ------------------------------
+# ==========================
+# Парсер строки login / password
+# ==========================
 
-
-def parse_line(line: str):
+def parse_login_password(line: str) -> tuple[str, str] | None:
     """
-    Пытается вытащить (login, password) из строки.
-    Поддерживает:
-      - разделители: пробел, таб, запятая, точка с запятой, двоеточие, вертикальная черта
-      - строки с лишним текстом, вроде:
-        'Логин: xxx | Пароль: yyy | Спасибо за покупку!'
-    Логика: режем по всем разделителям, выбрасываем слова 'логин', 'пароль',
-    'login', 'password', 'спасибо', 'покупку' и т.п. — берём первые два
-    нормальных токена как логин и пароль.
+    Универсальный парсер строки:
+    - режет по табам, ; , : |
+    - понимает "Логин: ... | Пароль: ..."
+    - понимает просто "login password"
+    Возвращает (login, password) или None.
     """
+    line = line.strip()
     if not line:
         return None
 
-    original = line.strip()
-    if not original:
+    # Убираем маркеры списков "- "
+    if line.startswith("-"):
+        line = line[1:].strip()
+
+    if not line:
         return None
 
-    # Заменяем всё, что может быть разделителем, на пробел
-    separators = ["\t", "|", ";", ":", ",", "/"]
-    temp = original
-    for sep in separators:
-        temp = temp.replace(sep, " ")
+    lower = line.lower()
 
-    # Разбиваем по пробелам
-    raw_tokens = temp.split()
-    if len(raw_tokens) < 2:
-        return None
+    # 1) Формат с подписями: "Логин: xxx | Пароль: yyy | ..."
+    if ("логин" in lower or "login" in lower) and ("парол" in lower or "pass" in lower):
+        # Ищем логин
+        m_login = re.search(
+            r"(логин|login)\s*[:\-]?\s*([^\s|,;:]+)", line, flags=re.IGNORECASE
+        )
+        # Ищем пароль
+        m_pass = re.search(
+            r"(пароль|parol|pass)\s*[:\-]?\s*([^\s|,;:]+)", line, flags=re.IGNORECASE
+        )
+        if m_login and m_pass:
+            return m_login.group(2), m_pass.group(2)
 
-    # Ключевые слова, которые нужно выкинуть
-    keywords = {
-        "логин",
-        "пароль",
-        "password",
-        "pass",
-        "login",
-        "спасибо",
-        "покупку",
-        "покупки",
-        "за",
-        "спасибозапокупку",
-    }
+    # 2) Простые разделители: таб, ; , : |
+    for sep in ["\t", ";", ",", ":", "|"]:
+        if sep in line:
+            parts = [p.strip() for p in line.split(sep) if p.strip()]
+            if len(parts) >= 2:
+                return parts[0], parts[1]
 
-    tokens: list[str] = []
-    for t in raw_tokens:
-        low = t.lower()
-        # убираем служебные слова
-        if low in keywords:
-            continue
-        # убираем чисто смайлики/картинки и совсем мусор
-        if not any(ch.isalnum() or ch in "@._-" for ch in t):
-            continue
-        tokens.append(t)
+    # 3) Пробелы
+    parts = line.split()
+    if len(parts) >= 2:
+        return parts[0].strip(), parts[1].strip()
 
-    if len(tokens) < 2:
-        return None
-
-    login = tokens[0].strip()
-    password = tokens[1].strip()
-
-    if not login or not password:
-        return None
-
-    return login, password
+    return None
 
 
-# ------------------------------
-# Загрузка текста
-# ------------------------------
-
+# ==========================
+# Обработка текста загрузки
+# ==========================
 
 @router.message(UploadStates.waiting_text)
-async def process_upload_text(
-    message: Message,
-    state: FSMContext,
-    role: str | None = None,
-):
-    # Обработка кнопки Назад внутри сценария
+async def process_upload_text(message: Message, state: FSMContext, role: str | None = None):
     if message.text == BACK_BUTTON:
         return await back_to_menu(message, state)
 
     data = await state.get_data()
-    r_type = data.get("type")
+    r_type: str = data.get("type")  # тип, выбранный админом
 
-    lines = (message.text or "").split("\n")
+    lines = message.text.splitlines()
     parsed: list[tuple[str, str]] = []
 
-    for ln in lines:
-        res = parse_line(ln)
-        if res:
-            login, password = res
+    # Особый случай: mamba [dolphin] — только имя профиля
+    if r_type == "mamba [dolphin]":
+        for ln in lines:
+            s = (ln or "").strip()
+            if not s:
+                continue
+            if s.startswith("-"):
+                s = s[1:].strip()
+            if not s:
+                continue
+            login = s
+            password = ""  # пароля нет, храним пустую строку
             parsed.append((login, password))
+    else:
+        # Обычные ресурсы — парсим логин/пароль
+        for ln in lines:
+            res = parse_login_password(ln)
+            if res:
+                login, password = res
+                parsed.append((login, password))
 
     total = len(parsed)
     added = 0
@@ -227,12 +217,12 @@ async def process_upload_text(
                 )
                 added += 1
             except Exception:
-                # Например, дубликаты по уникальному ограничению — просто пропускаем
-                continue
+                # дубликат или другая ошибка — пропускаем
+                pass
 
     text = (
         f"✅ Загрузка завершена.\n"
-        f"Распознано пар: {total}\n"
+        f"Распознано строк: {total}\n"
         f"Успешно добавлено в БД: {added}\n\n"
         f"Тип: {r_type}"
     )
@@ -240,6 +230,6 @@ async def process_upload_text(
     await message.answer(text, reply_markup=manager_menu_kb())
     await state.clear()
 
-    # После загрузки — показать статистику только админу
+    # После каждой загрузки — статистика свободных ресурсов (только админу)
     if role == "admin":
         await send_free_resources_stats(message)
