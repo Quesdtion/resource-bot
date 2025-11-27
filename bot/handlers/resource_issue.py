@@ -1,7 +1,6 @@
 # bot/handlers/resource_issue.py
 
 from aiogram import Router, F
-from aiogram.filters import Command
 from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
@@ -172,8 +171,7 @@ async def choose_count(message: Message, state: FSMContext, role: str | None = N
             """
             UPDATE resources
             SET status = 'busy',
-                manager_tg_id = $1,
-                issued_at = NOW()
+                manager_tg_id = $1
             WHERE id = ANY($2::int[])
             """,
             message.from_user.id,
