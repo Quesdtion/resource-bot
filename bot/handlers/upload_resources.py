@@ -90,7 +90,7 @@ async def choose_type(message: Message, state: FSMContext):
         "• email,password\n"
         "• email;password\n"
         "• email:password\n"
-        "• email<TAB>password\n"
+        "• email[TAB]password (между ними символ табуляции)\n"
         "• строки вида «Логин: xxx | Пароль: yyy | …»\n"
         "• строки с лишним текстом — найдём автоматически\n\n"
         "Для типа <b>mamba [dolphin]</b> достаточно списка имён профилей "
