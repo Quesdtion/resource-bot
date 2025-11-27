@@ -1,3 +1,5 @@
+# bot/handlers/upload_resources.py
+
 from aiogram import Router, F
 from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton
 from aiogram.filters import Command
@@ -6,6 +8,7 @@ from aiogram.fsm.state import StatesGroup, State
 
 from db.database import get_pool
 from bot.handlers.manager_menu import manager_menu_kb
+from bot.utils.admin_stats import send_free_resources_stats
 
 router = Router()
 
@@ -15,6 +18,7 @@ router = Router()
 
 BACK_BUTTON = "⬅️ Назад"
 
+# Добавляем сюда все типы, которые есть в системе
 RESOURCE_TYPES = ["mamba", "tabor", "beboo", "rambler"]
 
 
@@ -28,7 +32,7 @@ def resource_types_kb() -> ReplyKeyboardMarkup:
     )
 
 
-def back_only_kb():
+def back_only_kb() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[[KeyboardButton(text=BACK_BUTTON)]],
         resize_keyboard=True,
@@ -39,6 +43,7 @@ def back_only_kb():
 # FSM
 # ------------------------------
 
+
 class UploadStates(StatesGroup):
     waiting_type = State()
     waiting_text = State()
@@ -48,14 +53,24 @@ class UploadStates(StatesGroup):
 # Команда загрузки
 # ------------------------------
 
+
 @router.message(F.text == "📦 Загрузить ресурсы")
-async def upload_start(message: Message, state: FSMContext):
+async def upload_start(message: Message, state: FSMContext, role: str | None = None):
+    """
+    Вход в загрузку ресурсов (кнопка в админ-меню).
+    По сути рассчитано на админа, но если вдруг
+    нажмёт менеджер — просто даст ему загрузить, без статистики.
+    """
     await state.set_state(UploadStates.waiting_type)
     await message.answer("Выбери тип ресурса:", reply_markup=resource_types_kb())
 
 
 @router.message(F.text == BACK_BUTTON)
 async def back_to_menu(message: Message, state: FSMContext):
+    """
+    Глобальная кнопка Назад для этого сценария:
+    очищаем стейт и возвращаем в обычное меню.
+    """
     await state.clear()
     await message.answer("Главное меню", reply_markup=manager_menu_kb())
 
@@ -64,9 +79,10 @@ async def back_to_menu(message: Message, state: FSMContext):
 # Выбор типа ресурса
 # ------------------------------
 
+
 @router.message(UploadStates.waiting_type)
 async def choose_type(message: Message, state: FSMContext):
-    r_type = message.text.strip().lower()
+    r_type = (message.text or "").strip().lower()
 
     if r_type not in RESOURCE_TYPES:
         await message.answer("Выбери тип кнопкой.", reply_markup=resource_types_kb())
@@ -80,10 +96,9 @@ async def choose_type(message: Message, state: FSMContext):
         "Поддерживаемые форматы:\n"
         "• email password\n"
         "• email,password\n"
-        "• email:password\n"
         "• email\tpassword\n"
         "• строки с лишним текстом — найдём автоматически",
-        reply_markup=back_only_kb()
+        reply_markup=back_only_kb(),
     )
 
 
@@ -91,37 +106,33 @@ async def choose_type(message: Message, state: FSMContext):
 # Парсер строки
 # ------------------------------
 
+
 def parse_line(line: str):
     """
-    Возвращает (login, password)
-    Поддерживаемые типы разделителей:
-    - :
-    - таб
-    - пробел
-    - запятая
-    - любые строки с мусором
+    Возвращает (login, password) или None.
+    Поддерживает:
+    - tab
+    - пробелы
+    - запятую
+    - любые символы вокруг (режем по первым двум "столбцам").
     """
-    line = line.strip()
+    line = (line or "").strip()
+    if not line:
+        return None
 
-    # 1) login:password
-    if ":" in line:
-        parts = line.split(":")
-        if len(parts) >= 2:
-            return parts[0].strip(), parts[1].strip()
-
-    # 2) TAB
+    # TAB
     if "\t" in line:
         parts = line.split("\t")
         if len(parts) >= 2:
             return parts[0].strip(), parts[1].strip()
 
-    # 3) email,password
+    # Запятая
     if "," in line:
         parts = line.split(",")
         if len(parts) >= 2:
             return parts[0].strip(), parts[1].strip()
 
-    # 4) email password
+    # Пробел(ы)
     parts = line.split()
     if len(parts) >= 2:
         return parts[0].strip(), parts[1].strip()
@@ -133,16 +144,22 @@ def parse_line(line: str):
 # Загрузка текста
 # ------------------------------
 
+
 @router.message(UploadStates.waiting_text)
-async def process_upload_text(message: Message, state: FSMContext):
+async def process_upload_text(
+    message: Message,
+    state: FSMContext,
+    role: str | None = None,
+):
+    # Обработка кнопки Назад внутри сценария
     if message.text == BACK_BUTTON:
         return await back_to_menu(message, state)
 
     data = await state.get_data()
     r_type = data.get("type")
 
-    lines = message.text.split("\n")
-    parsed = []
+    lines = (message.text or "").split("\n")
+    parsed: list[tuple[str, str]] = []
 
     for ln in lines:
         res = parse_line(ln)
@@ -154,7 +171,10 @@ async def process_upload_text(message: Message, state: FSMContext):
     added = 0
 
     if total == 0:
-        await message.answer("❗ Не найдено ни одной пары логин/пароль.", reply_markup=manager_menu_kb())
+        await message.answer(
+            "❗ Не найдено ни одной пары логин/пароль.",
+            reply_markup=manager_menu_kb(),
+        )
         await state.clear()
         return
 
@@ -173,7 +193,8 @@ async def process_upload_text(message: Message, state: FSMContext):
                 )
                 added += 1
             except Exception:
-                pass
+                # например, unique-ограничения — просто пропускаем
+                continue
 
     text = (
         f"✅ Загрузка завершена.\n"
@@ -184,3 +205,7 @@ async def process_upload_text(message: Message, state: FSMContext):
 
     await message.answer(text, reply_markup=manager_menu_kb())
     await state.clear()
+
+    # 🔹 После загрузки — показать статистику ТОЛЬКО админу
+    if role == "admin":
+        await send_free_resources_stats(message)
