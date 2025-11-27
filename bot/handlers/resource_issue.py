@@ -1,5 +1,3 @@
-# bot/handlers/resource_issue.py
-
 from aiogram import Router, F
 from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton
 from aiogram.fsm.context import FSMContext
@@ -11,16 +9,13 @@ from bot.utils.admin_stats import send_free_resources_stats
 
 router = Router()
 
-# Типы ресурсов (как в загрузке)
-RESOURCE_TYPES = ["mamba", "tabor", "beboo", "rambler"]
+# Добавили новый тип mamba [dolphin]
+RESOURCE_TYPES = ["mamba", "tabor", "beboo", "rambler", "mamba [dolphin]"]
 
 BACK_BUTTON = "⬅️ Назад"
 
 
 def type_choice_kb() -> ReplyKeyboardMarkup:
-    """
-    Клавиатура выбора типа ресурса при выдаче.
-    """
     rows: list[list[KeyboardButton]] = []
     row: list[KeyboardButton] = []
 
@@ -38,9 +33,6 @@ def type_choice_kb() -> ReplyKeyboardMarkup:
 
 
 def count_kb() -> ReplyKeyboardMarkup:
-    """
-    Клавиатура выбора количества ресурсов 1–10.
-    """
     rows = [
         [
             KeyboardButton(text="1"),
@@ -66,16 +58,8 @@ class IssueStates(StatesGroup):
     waiting_count = State()
 
 
-# ==========================
-# Старт выдачи ресурсов
-# ==========================
-
-
 @router.message(F.text == "📦 Получить ресурсы")
 async def start_issue(message: Message, state: FSMContext):
-    """
-    Менеджер нажал кнопку 'Получить ресурсы'.
-    """
     await state.set_state(IssueStates.waiting_type)
     await message.answer(
         "Выбери тип ресурса, который тебе нужен:",
@@ -83,7 +67,6 @@ async def start_issue(message: Message, state: FSMContext):
     )
 
 
-# Назад / отмена
 @router.message(IssueStates.waiting_type, F.text == BACK_BUTTON)
 @router.message(IssueStates.waiting_count, F.text == BACK_BUTTON)
 async def cancel_issue(message: Message, state: FSMContext):
@@ -91,14 +74,9 @@ async def cancel_issue(message: Message, state: FSMContext):
     await message.answer("Главное меню:", reply_markup=manager_menu_kb())
 
 
-# ==========================
-# Выбор типа ресурса
-# ==========================
-
-
 @router.message(IssueStates.waiting_type)
 async def choose_type(message: Message, state: FSMContext):
-    r_type = (message.text or "").strip().lower()
+    r_type = (message.text or "").strip()
 
     if r_type not in RESOURCE_TYPES:
         await message.answer(
@@ -116,17 +94,11 @@ async def choose_type(message: Message, state: FSMContext):
     )
 
 
-# ==========================
-# Выбор количества и выдача
-# ==========================
-
-
 @router.message(IssueStates.waiting_count)
 async def choose_count(message: Message, state: FSMContext, role: str | None = None):
     text = (message.text or "").strip()
 
     if text == BACK_BUTTON:
-        # Назад к выбору типа
         await state.set_state(IssueStates.waiting_type)
         await message.answer(
             "Выбери тип ресурса, который тебе нужен:",
@@ -151,7 +123,6 @@ async def choose_count(message: Message, state: FSMContext, role: str | None = N
 
     pool = await get_pool()
     async with pool.acquire() as conn:
-        # Свободный ресурс = status='free' И manager_tg_id IS NULL
         rows = await conn.fetch(
             """
             SELECT id, login, password, proxy
@@ -177,8 +148,7 @@ async def choose_count(message: Message, state: FSMContext, role: str | None = N
 
         ids = [r["id"] for r in rows]
 
-        # ❗ Статус НЕ трогаем, чтобы не ломать CHECK-constraint.
-        # Занятость определяем только по manager_tg_id.
+        # Статус не трогаем, только помечаем, что ресурс выдан менеджеру
         await conn.execute(
             """
             UPDATE resources
@@ -189,15 +159,20 @@ async def choose_count(message: Message, state: FSMContext, role: str | None = N
             ids,
         )
 
-    # Формируем красивый вывод
     issued_count = len(rows)
     lines = [f"📦 Выдано ресурсов: {issued_count} (тип: {r_type})", ""]
+
     for idx, row in enumerate(rows, start=1):
         login = row["login"]
-        password = row["password"]
-        line = f"{idx}) {login} | {password}"
-
+        password = row["password"] or ""
         proxy = row.get("proxy")
+
+        if password:
+            line = f"{idx}) {login} | {password}"
+        else:
+            # Для mamba [dolphin] пароль пустой – показываем просто имя профиля
+            line = f"{idx}) {login}"
+
         if proxy:
             line += f" | proxy: {proxy}"
 
@@ -206,6 +181,6 @@ async def choose_count(message: Message, state: FSMContext, role: str | None = N
     await message.answer("\n".join(lines), reply_markup=manager_menu_kb())
     await state.clear()
 
-    # После выдачи показываем статистику свободных ресурсов только админу
+    # После выдачи — статистика свободных ресурсов только админу
     if role == "admin":
         await send_free_resources_stats(message)
