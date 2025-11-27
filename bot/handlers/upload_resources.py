@@ -18,7 +18,7 @@ router = Router()
 
 BACK_BUTTON = "⬅️ Назад"
 
-# Добавляем сюда все типы, которые есть в системе
+# Все типы ресурсов
 RESOURCE_TYPES = ["mamba", "tabor", "beboo", "rambler"]
 
 
@@ -57,9 +57,7 @@ class UploadStates(StatesGroup):
 @router.message(F.text == "📦 Загрузить ресурсы")
 async def upload_start(message: Message, state: FSMContext, role: str | None = None):
     """
-    Вход в загрузку ресурсов (кнопка в админ-меню).
-    По сути рассчитано на админа, но если вдруг
-    нажмёт менеджер — просто даст ему загрузить, без статистики.
+    Вход в загрузку ресурсов из админ-меню.
     """
     await state.set_state(UploadStates.waiting_type)
     await message.answer("Выбери тип ресурса:", reply_markup=resource_types_kb())
@@ -68,7 +66,7 @@ async def upload_start(message: Message, state: FSMContext, role: str | None = N
 @router.message(F.text == BACK_BUTTON)
 async def back_to_menu(message: Message, state: FSMContext):
     """
-    Глобальная кнопка Назад для этого сценария:
+    Глобальная кнопка Назад для сценария загрузки:
     очищаем стейт и возвращаем в обычное меню.
     """
     await state.clear()
@@ -93,10 +91,13 @@ async def choose_type(message: Message, state: FSMContext):
 
     await message.answer(
         "Отправь список ресурсов.\n"
-        "Поддерживаемые форматы:\n"
+        "Поддерживаемые форматы, например:\n"
         "• email password\n"
         "• email,password\n"
-        "• email\tpassword\n"
+        "• email;password\n"
+        "• email:password\n"
+        "• phone:password\n"
+        "• Логин: email | Пароль: pass | любой текст\n"
         "• строки с лишним текстом — найдём автоматически",
         reply_markup=back_only_kb(),
     )
@@ -109,35 +110,68 @@ async def choose_type(message: Message, state: FSMContext):
 
 def parse_line(line: str):
     """
-    Возвращает (login, password) или None.
+    Пытается вытащить (login, password) из строки.
     Поддерживает:
-    - tab
-    - пробелы
-    - запятую
-    - любые символы вокруг (режем по первым двум "столбцам").
+      - разделители: пробел, таб, запятая, точка с запятой, двоеточие, вертикальная черта
+      - строки с лишним текстом, вроде:
+        'Логин: xxx | Пароль: yyy | Спасибо за покупку!'
+    Логика: режем по всем разделителям, выбрасываем слова 'логин', 'пароль',
+    'login', 'password', 'спасибо', 'покупку' и т.п. — берём первые два
+    нормальных токена как логин и пароль.
     """
-    line = (line or "").strip()
     if not line:
         return None
 
-    # TAB
-    if "\t" in line:
-        parts = line.split("\t")
-        if len(parts) >= 2:
-            return parts[0].strip(), parts[1].strip()
+    original = line.strip()
+    if not original:
+        return None
 
-    # Запятая
-    if "," in line:
-        parts = line.split(",")
-        if len(parts) >= 2:
-            return parts[0].strip(), parts[1].strip()
+    # Заменяем всё, что может быть разделителем, на пробел
+    separators = ["\t", "|", ";", ":", ",", "/"]
+    temp = original
+    for sep in separators:
+        temp = temp.replace(sep, " ")
 
-    # Пробел(ы)
-    parts = line.split()
-    if len(parts) >= 2:
-        return parts[0].strip(), parts[1].strip()
+    # Разбиваем по пробелам
+    raw_tokens = temp.split()
+    if len(raw_tokens) < 2:
+        return None
 
-    return None
+    # Ключевые слова, которые нужно выкинуть
+    keywords = {
+        "логин",
+        "пароль",
+        "password",
+        "pass",
+        "login",
+        "спасибо",
+        "покупку",
+        "покупки",
+        "за",
+        "спасибозапокупку",
+    }
+
+    tokens: list[str] = []
+    for t in raw_tokens:
+        low = t.lower()
+        # убираем служебные слова
+        if low in keywords:
+            continue
+        # убираем чисто смайлики/картинки и совсем мусор
+        if not any(ch.isalnum() or ch in "@._-" for ch in t):
+            continue
+        tokens.append(t)
+
+    if len(tokens) < 2:
+        return None
+
+    login = tokens[0].strip()
+    password = tokens[1].strip()
+
+    if not login or not password:
+        return None
+
+    return login, password
 
 
 # ------------------------------
@@ -193,7 +227,7 @@ async def process_upload_text(
                 )
                 added += 1
             except Exception:
-                # например, unique-ограничения — просто пропускаем
+                # Например, дубликаты по уникальному ограничению — просто пропускаем
                 continue
 
     text = (
@@ -206,6 +240,6 @@ async def process_upload_text(
     await message.answer(text, reply_markup=manager_menu_kb())
     await state.clear()
 
-    # 🔹 После загрузки — показать статистику ТОЛЬКО админу
+    # После загрузки — показать статистику только админу
     if role == "admin":
         await send_free_resources_stats(message)
