@@ -11,7 +11,7 @@ from bot.utils.admin_stats import send_free_resources_stats
 
 router = Router()
 
-# Те же типы, что и в загрузке ресурсов
+# Типы ресурсов (как в загрузке)
 RESOURCE_TYPES = ["mamba", "tabor", "beboo", "rambler"]
 
 BACK_BUTTON = "⬅️ Назад"
@@ -21,8 +21,9 @@ def type_choice_kb() -> ReplyKeyboardMarkup:
     """
     Клавиатура выбора типа ресурса при выдаче.
     """
-    rows = []
-    row = []
+    rows: list[list[KeyboardButton]] = []
+    row: list[KeyboardButton] = []
+
     for idx, t in enumerate(RESOURCE_TYPES, start=1):
         row.append(KeyboardButton(text=t))
         if idx % 3 == 0:
@@ -82,7 +83,7 @@ async def start_issue(message: Message, state: FSMContext):
     )
 
 
-# Отмена/назад из сценария выдачи
+# Назад / отмена
 @router.message(IssueStates.waiting_type, F.text == BACK_BUTTON)
 @router.message(IssueStates.waiting_count, F.text == BACK_BUTTON)
 async def cancel_issue(message: Message, state: FSMContext):
@@ -100,7 +101,10 @@ async def choose_type(message: Message, state: FSMContext):
     r_type = (message.text or "").strip().lower()
 
     if r_type not in RESOURCE_TYPES:
-        await message.answer("Пожалуйста, выбери тип кнопкой ниже:", reply_markup=type_choice_kb())
+        await message.answer(
+            "Пожалуйста, выбери тип кнопкой ниже:",
+            reply_markup=type_choice_kb(),
+        )
         return
 
     await state.update_data(type=r_type)
@@ -122,13 +126,19 @@ async def choose_count(message: Message, state: FSMContext, role: str | None = N
     text = (message.text or "").strip()
 
     if text == BACK_BUTTON:
-        # Возвращаемся к выбору типа
+        # Назад к выбору типа
         await state.set_state(IssueStates.waiting_type)
-        await message.answer("Выбери тип ресурса, который тебе нужен:", reply_markup=type_choice_kb())
+        await message.answer(
+            "Выбери тип ресурса, который тебе нужен:",
+            reply_markup=type_choice_kb(),
+        )
         return
 
     if not text.isdigit():
-        await message.answer("Введи число от 1 до 10 или нажми кнопку.", reply_markup=count_kb())
+        await message.answer(
+            "Введи число от 1 до 10 или нажми кнопку.",
+            reply_markup=count_kb(),
+        )
         return
 
     count = int(text)
@@ -141,12 +151,13 @@ async def choose_count(message: Message, state: FSMContext, role: str | None = N
 
     pool = await get_pool()
     async with pool.acquire() as conn:
-        # Берём свободные ресурсы нужного типа
+        # Свободный ресурс = status='free' И manager_tg_id IS NULL
         rows = await conn.fetch(
             """
             SELECT id, login, password, proxy
             FROM resources
             WHERE status = 'free'
+              AND manager_tg_id IS NULL
               AND type = $1
             ORDER BY id
             LIMIT $2
@@ -166,12 +177,12 @@ async def choose_count(message: Message, state: FSMContext, role: str | None = N
 
         ids = [r["id"] for r in rows]
 
-        # Помечаем как выданные конкретному менеджеру
+        # ❗ Статус НЕ трогаем, чтобы не ломать CHECK-constraint.
+        # Занятость определяем только по manager_tg_id.
         await conn.execute(
             """
             UPDATE resources
-            SET status = 'busy',
-                manager_tg_id = $1
+            SET manager_tg_id = $1
             WHERE id = ANY($2::int[])
             """,
             message.from_user.id,
